@@ -150,6 +150,11 @@ int tcp_rpcs_default_execute (connection_job_t c, int op, struct raw_message *ms
 static unsigned char ext_secret[16][16];
 static int ext_secret_cnt = 0;
 
+void mtfront_on_secret_connection_open (int secret_id) __attribute__ ((weak));
+void mtfront_on_secret_connection_open (int secret_id) {
+  (void) secret_id;
+}
+
 void tcp_rpcs_set_ext_secret (unsigned char secret[16]) {
   assert (ext_secret_cnt < 16);
   memcpy (ext_secret[ext_secret_cnt ++], secret, 16);
@@ -992,6 +997,9 @@ int tcp_rpcs_ext_alarm (connection_job_t C) {
 }
 
 int tcp_rpcs_ext_init_accepted (connection_job_t C) {
+  struct tcp_rpc_data *D = TCP_RPC_DATA (C);
+  D->extra_int2 = 0;
+  D->extra_int3 = 0;
   job_timer_insert (C, precise_now + 10);
   return tcp_rpcs_init_accepted_nohs (C);
 }
@@ -1160,6 +1168,11 @@ int tcp_rpcs_compact_parse_execute (connection_job_t C) {
         if (secret_id == ext_secret_cnt) {
           vkprintf (1, "Receive request with unmatched client random\n");
           RETURN_TLS_ERROR(info);
+        }
+        D->extra_int2 = secret_id + 1;
+        if (!D->extra_int3) {
+          D->extra_int3 = 1;
+          mtfront_on_secret_connection_open (secret_id);
         }
         int timestamp = *(int *)(expected_random + 28) ^ *(int *)(client_random + 28);
         if (!is_allowed_timestamp (timestamp)) {
@@ -1334,6 +1347,13 @@ int tcp_rpcs_compact_parse_execute (connection_job_t C) {
 
           int target = *(short *)(random_header + 60);
           D->extra_int4 = target;
+          if (ext_secret_cnt > 0) {
+            D->extra_int2 = secret_id + 1;
+            if (!D->extra_int3) {
+              D->extra_int3 = 1;
+              mtfront_on_secret_connection_open (secret_id);
+            }
+          }
           vkprintf (1, "tcp opportunistic encryption mode detected, tag = %08x, target=%d\n", tag, target);
           ok = 1;
           break;

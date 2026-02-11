@@ -94,6 +94,7 @@ const char FullVersionStr[] = VERSION_STR " compiled at " __DATE__ " " __TIME__ 
 #define CONNECT_TIMEOUT 3
 
 #define	MAX_POST_SIZE	(262144 * 4 - 4096)
+#define MAX_MTFRONT_SECRETS 16
 
 #define	DEFAULT_WINDOW_CLAMP	131072
 
@@ -399,6 +400,7 @@ struct worker_stats {
   long long mtproto_proxy_errors;
 
   long long connections_failed_lru, connections_failed_flood;
+  int active_connections_per_secret[MAX_MTFRONT_SECRETS];
 
   long long ext_connections, ext_connections_created;
   long long http_queries, http_bad_headers;
@@ -420,6 +422,14 @@ long long mtproto_proxy_errors;
 
 char proxy_tag[16];
 int proxy_tag_set;
+static int secret_count;
+static int active_connections_per_secret[MAX_MTFRONT_SECRETS];
+
+void mtfront_on_secret_connection_open (int secret_id) {
+  if (secret_id >= 0 && secret_id < MAX_MTFRONT_SECRETS) {
+    __sync_fetch_and_add (&active_connections_per_secret[secret_id], 1);
+  }
+}
 
 static void update_local_stats_copy (struct worker_stats *S) {
   S->cnt++;
@@ -454,6 +464,10 @@ static void update_local_stats_copy (struct worker_stats *S) {
   UPD (ext_connections_created); 
   UPD (http_queries); 
   UPD (http_bad_headers);
+  int i;
+  for (i = 0; i < MAX_MTFRONT_SECRETS; i++) {
+    S->active_connections_per_secret[i] = active_connections_per_secret[i];
+  }
 #undef UPD
   __sync_synchronize();
   S->cnt++;
@@ -527,6 +541,10 @@ static inline void add_stats (struct worker_stats *W) {
   UPD (ext_connections_created); 
   UPD (http_queries); 
   UPD (http_bad_headers);
+  int i;
+  for (i = 0; i < MAX_MTFRONT_SECRETS; i++) {
+    SumStats.active_connections_per_secret[i] += W->active_connections_per_secret[i];
+  }
 #undef UPD
 }
 
@@ -584,6 +602,7 @@ void mtfront_prepare_stats (stats_buffer_t *sb) {
   fetch_buffers_stat (&bufs);
   fetch_tot_dh_rounds_stat (tot_dh_rounds);
   fetch_aes_crypto_stat (&allocated_aes_crypto, &allocated_aes_crypto_temp);
+  int i;
 
   sb_prepare (sb);
   sb_memory (sb, AM_GET_MEMORY_USAGE_SELF);
@@ -712,6 +731,9 @@ void mtfront_prepare_stats (stats_buffer_t *sb) {
 	     proxy_mode,
 	     proxy_tag_set
   );
+  for (i = 0; i < secret_count; i++) {
+    sb_printf (sb, "secret_%d_active_connections\t%d\n", i + 1, S(active_connections_per_secret[i]));
+  }
 #undef S
 #undef S1
 #undef SW
@@ -1086,6 +1108,13 @@ int mtproto_ext_rpc_ready (connection_job_t C) {
 int mtproto_ext_rpc_close (connection_job_t C, int who) {
   assert ((unsigned) CONN_INFO(C)->fd < MAX_CONNECTIONS);
   vkprintf (3, "ext_rpc connection closing (%d) by %d\n", CONN_INFO(C)->fd, who);
+  struct tcp_rpc_data *D = TCP_RPC_DATA(C);
+  int secret_id = D->extra_int2 - 1;
+  if (D->extra_int3 && secret_id >= 0 && secret_id < MAX_MTFRONT_SECRETS) {
+    __sync_fetch_and_add (&active_connections_per_secret[secret_id], -1);
+    D->extra_int3 = 0;
+  }
+  D->extra_int2 = 0;
   struct ext_connection *Ex = get_ext_connection_by_in_fd (CONN_INFO(C)->fd);
   if (Ex) {
     remove_ext_connection (Ex, 1);
@@ -2076,7 +2105,6 @@ int sfd;
 int http_ports_num;
 int http_sfd[MAX_HTTP_LISTEN_PORTS], http_port[MAX_HTTP_LISTEN_PORTS];
 static int domain_count;
-static int secret_count;
 
 // static double next_create_outbound;
 // int outbound_connections_per_second = DEFAULT_OUTBOUND_CONNECTION_CREATION_RATE;
@@ -2220,6 +2248,7 @@ int f_parse_option (int val) {
         }
       }
       if (val == 'S') {
+	assert (secret_count < MAX_MTFRONT_SECRETS);
 	tcp_rpcs_set_ext_secret (secret);
 	secret_count++;
       } else {
