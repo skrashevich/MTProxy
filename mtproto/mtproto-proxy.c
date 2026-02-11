@@ -184,7 +184,10 @@ struct ext_connection {
   long long out_conn_id;
   long long auth_key_id;
   long long tracked_auth_key_id;
-  int tracked_secret_id;
+  int tracked_auth_secret_id;
+  int tracked_client_secret_id;
+  int tracked_client_valid;
+  unsigned char tracked_client_ipv6[16];
   struct ext_connection *lru_prev, *lru_next;
 };
 
@@ -200,13 +203,22 @@ struct secret_device_ref {
   int connections;
 };
 
+struct secret_client_ref {
+  struct secret_client_ref *next;
+  int secret_id;
+  unsigned char client_ipv6[16];
+  int connections;
+};
+
 long long ext_connections, ext_connections_created;
 
 struct ext_connection_ref OutExtConnections[EXT_CONN_TABLE_SIZE];
 struct ext_connection *InExtConnectionHash[EXT_CONN_HASH_SIZE];
 struct ext_connection ExtConnectionHead[MAX_CONNECTIONS];
 static struct secret_device_ref *SecretDeviceHash[SECRET_DEVICE_HASH_SIZE];
+static struct secret_client_ref *SecretClientHash[SECRET_DEVICE_HASH_SIZE];
 static int active_connections_per_secret[MAX_MTFRONT_SECRETS];
+static int active_auth_keys_per_secret[MAX_MTFRONT_SECRETS];
 
 void lru_delete_ext_conn (struct ext_connection *Ext);
 
@@ -219,13 +231,23 @@ static inline int ext_conn_hash (int in_fd, long long in_conn_id) {
   return (h >> (64 - EXT_CONN_HASH_SHIFT));
 }
 
-static inline int secret_device_hash (int secret_id, long long auth_key_id) {
+static inline int secret_auth_key_hash (int secret_id, long long auth_key_id) {
   unsigned long long h = (unsigned long long) secret_id * 11400714819323198485ULL + (unsigned long long) auth_key_id * 13043817825332782213ULL;
   return h & (SECRET_DEVICE_HASH_SIZE - 1);
 }
 
-static struct secret_device_ref **get_secret_device_ref_ptr (int secret_id, long long auth_key_id) {
-  int h = secret_device_hash (secret_id, auth_key_id);
+static inline int secret_client_hash (int secret_id, const unsigned char client_ipv6[16]) {
+  unsigned long long h = (unsigned long long) secret_id * 1469598103934665603ULL;
+  int i;
+  for (i = 0; i < 16; i++) {
+    h ^= client_ipv6[i];
+    h *= 1099511628211ULL;
+  }
+  return h & (SECRET_DEVICE_HASH_SIZE - 1);
+}
+
+static struct secret_device_ref **get_secret_auth_key_ref_ptr (int secret_id, long long auth_key_id) {
+  int h = secret_auth_key_hash (secret_id, auth_key_id);
   struct secret_device_ref **cur = &SecretDeviceHash[h];
   while (*cur && ((*cur)->secret_id != secret_id || (*cur)->auth_key_id != auth_key_id)) {
     cur = &(*cur)->next;
@@ -233,25 +255,104 @@ static struct secret_device_ref **get_secret_device_ref_ptr (int secret_id, long
   return cur;
 }
 
-static void mtfront_untrack_secret_device (struct ext_connection *Ex) {
+static struct secret_client_ref **get_secret_client_ref_ptr (int secret_id, const unsigned char client_ipv6[16]) {
+  int h = secret_client_hash (secret_id, client_ipv6);
+  struct secret_client_ref **cur = &SecretClientHash[h];
+  while (*cur && ((*cur)->secret_id != secret_id || memcmp ((*cur)->client_ipv6, client_ipv6, 16) != 0)) {
+    cur = &(*cur)->next;
+  }
+  return cur;
+}
+
+static void mtfront_extract_client_ipv6 (connection_job_t C, unsigned char client_ipv6[16]) {
+  struct connection_info *c = CONN_INFO(C);
+  if (c->remote_ip) {
+    set_4in6 (client_ipv6, htonl (c->remote_ip));
+  } else {
+    memcpy (client_ipv6, c->remote_ipv6, 16);
+  }
+}
+
+static void mtfront_untrack_secret_auth_key (struct ext_connection *Ex) {
   check_engine_class ();
   if (!Ex->tracked_auth_key_id) {
     return;
   }
 
-  int secret_id = Ex->tracked_secret_id;
+  int secret_id = Ex->tracked_auth_secret_id;
   long long auth_key_id = Ex->tracked_auth_key_id;
-  Ex->tracked_secret_id = 0;
+  Ex->tracked_auth_secret_id = 0;
   Ex->tracked_auth_key_id = 0;
 
   if (secret_id < 0 || secret_id >= MAX_MTFRONT_SECRETS) {
     return;
   }
 
-  struct secret_device_ref **ref_ptr = get_secret_device_ref_ptr (secret_id, auth_key_id);
+  struct secret_device_ref **ref_ptr = get_secret_auth_key_ref_ptr (secret_id, auth_key_id);
   struct secret_device_ref *ref = *ref_ptr;
   if (!ref) {
     vkprintf (1, "can't find tracked secret device ref: secret_id=%d auth_key_id=%016llx\n", secret_id, auth_key_id);
+    return;
+  }
+
+  assert (ref->connections > 0);
+  if (--ref->connections == 0) {
+    *ref_ptr = ref->next;
+    free (ref);
+    assert (active_auth_keys_per_secret[secret_id] > 0);
+    --active_auth_keys_per_secret[secret_id];
+  }
+}
+
+static void mtfront_track_secret_auth_key (struct ext_connection *Ex, int secret_id, long long auth_key_id) {
+  check_engine_class ();
+
+  if (Ex->tracked_auth_key_id == auth_key_id && Ex->tracked_auth_secret_id == secret_id) {
+    return;
+  }
+  mtfront_untrack_secret_auth_key (Ex);
+
+  if (secret_id < 0 || secret_id >= MAX_MTFRONT_SECRETS || !auth_key_id) {
+    return;
+  }
+
+  struct secret_device_ref **ref_ptr = get_secret_auth_key_ref_ptr (secret_id, auth_key_id);
+  struct secret_device_ref *ref = *ref_ptr;
+  if (!ref) {
+    ref = calloc (1, sizeof (*ref));
+    assert (ref);
+    ref->secret_id = secret_id;
+    ref->auth_key_id = auth_key_id;
+    ref->next = *ref_ptr;
+    *ref_ptr = ref;
+    ++active_auth_keys_per_secret[secret_id];
+  }
+  ++ref->connections;
+  Ex->tracked_auth_secret_id = secret_id;
+  Ex->tracked_auth_key_id = auth_key_id;
+}
+
+static void mtfront_untrack_secret_client (struct ext_connection *Ex) {
+  check_engine_class ();
+  if (!Ex->tracked_client_valid) {
+    return;
+  }
+
+  int secret_id = Ex->tracked_client_secret_id;
+  unsigned char client_ipv6[16];
+  memcpy (client_ipv6, Ex->tracked_client_ipv6, 16);
+  Ex->tracked_client_secret_id = 0;
+  Ex->tracked_client_valid = 0;
+  memset (Ex->tracked_client_ipv6, 0, 16);
+
+  if (secret_id < 0 || secret_id >= MAX_MTFRONT_SECRETS) {
+    return;
+  }
+
+  struct secret_client_ref **ref_ptr = get_secret_client_ref_ptr (secret_id, client_ipv6);
+  struct secret_client_ref *ref = *ref_ptr;
+  if (!ref) {
+    vkprintf (1, "can't find tracked secret client ref: secret_id=%d\n", secret_id);
     return;
   }
 
@@ -264,32 +365,40 @@ static void mtfront_untrack_secret_device (struct ext_connection *Ex) {
   }
 }
 
-static void mtfront_track_secret_device (struct ext_connection *Ex, int secret_id, long long auth_key_id) {
+static void mtfront_track_secret_client (connection_job_t C, struct ext_connection *Ex, int secret_id) {
   check_engine_class ();
 
-  if (Ex->tracked_auth_key_id == auth_key_id && Ex->tracked_secret_id == secret_id) {
-    return;
-  }
-  mtfront_untrack_secret_device (Ex);
-
-  if (secret_id < 0 || secret_id >= MAX_MTFRONT_SECRETS || !auth_key_id) {
+  if (secret_id < 0 || secret_id >= MAX_MTFRONT_SECRETS) {
+    mtfront_untrack_secret_client (Ex);
     return;
   }
 
-  struct secret_device_ref **ref_ptr = get_secret_device_ref_ptr (secret_id, auth_key_id);
-  struct secret_device_ref *ref = *ref_ptr;
+  unsigned char client_ipv6[16];
+  mtfront_extract_client_ipv6 (C, client_ipv6);
+
+  if (Ex->tracked_client_valid &&
+      Ex->tracked_client_secret_id == secret_id &&
+      memcmp (Ex->tracked_client_ipv6, client_ipv6, 16) == 0) {
+    return;
+  }
+
+  mtfront_untrack_secret_client (Ex);
+
+  struct secret_client_ref **ref_ptr = get_secret_client_ref_ptr (secret_id, client_ipv6);
+  struct secret_client_ref *ref = *ref_ptr;
   if (!ref) {
     ref = calloc (1, sizeof (*ref));
     assert (ref);
     ref->secret_id = secret_id;
-    ref->auth_key_id = auth_key_id;
+    memcpy (ref->client_ipv6, client_ipv6, 16);
     ref->next = *ref_ptr;
     *ref_ptr = ref;
     ++active_connections_per_secret[secret_id];
   }
   ++ref->connections;
-  Ex->tracked_secret_id = secret_id;
-  Ex->tracked_auth_key_id = auth_key_id;
+  Ex->tracked_client_secret_id = secret_id;
+  Ex->tracked_client_valid = 1;
+  memcpy (Ex->tracked_client_ipv6, client_ipv6, 16);
 }
 
 // makes sense only for !IS_PROXY_IN
@@ -321,7 +430,8 @@ struct ext_connection *get_ext_connection_by_in_conn_id (int in_fd, int in_gen, 
       if (mode != 1) {
 	return 0;
       }
-      mtfront_untrack_secret_device (cur);
+      mtfront_untrack_secret_auth_key (cur);
+      mtfront_untrack_secret_client (cur);
       if (cur->i_next) {
 	cur->i_next->i_prev = cur->i_prev;
 	cur->i_prev->i_next = cur->i_next;
@@ -488,6 +598,7 @@ struct worker_stats {
 
   long long connections_failed_lru, connections_failed_flood;
   int active_connections_per_secret[MAX_MTFRONT_SECRETS];
+  int active_auth_keys_per_secret[MAX_MTFRONT_SECRETS];
 
   long long ext_connections, ext_connections_created;
   long long http_queries, http_bad_headers;
@@ -555,6 +666,7 @@ static void update_local_stats_copy (struct worker_stats *S) {
   int i;
   for (i = 0; i < MAX_MTFRONT_SECRETS; i++) {
     S->active_connections_per_secret[i] = active_connections_per_secret[i];
+    S->active_auth_keys_per_secret[i] = active_auth_keys_per_secret[i];
   }
 #undef UPD
   __sync_synchronize();
@@ -632,6 +744,7 @@ static inline void add_stats (struct worker_stats *W) {
   int i;
   for (i = 0; i < MAX_MTFRONT_SECRETS; i++) {
     SumStats.active_connections_per_secret[i] += W->active_connections_per_secret[i];
+    SumStats.active_auth_keys_per_secret[i] += W->active_auth_keys_per_secret[i];
   }
 #undef UPD
 }
@@ -821,6 +934,7 @@ void mtfront_prepare_stats (stats_buffer_t *sb) {
   );
   for (i = 0; i < secret_count; i++) {
     sb_printf (sb, "secret_%d_active_connections\t%d\n", i + 1, S(active_connections_per_secret[i]));
+    sb_printf (sb, "secret_%d_active_auth_keys\t%d\n", i + 1, S(active_auth_keys_per_secret[i]));
   }
 #undef S
 #undef S1
@@ -1901,7 +2015,8 @@ int forward_tcp_query (struct tl_in_state *tlio_in, connection_job_t c, conn_tar
   tot_forwarded_queries++;
 
   assert (Ex);
-  mtfront_track_secret_device (Ex, secret_id, Ex->auth_key_id);
+  mtfront_track_secret_auth_key (Ex, secret_id, Ex->auth_key_id);
+  mtfront_track_secret_client (c, Ex, secret_id);
 
   vkprintf (3, "forwarding user query from connection %d~%d (ext_conn_id %llx) into connection %d~%d (ext_conn_id %llx)\n", Ex->in_fd, Ex->in_gen, Ex->in_conn_id, Ex->out_fd, Ex->out_gen, Ex->out_conn_id);
 
