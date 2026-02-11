@@ -24,6 +24,8 @@ RUN set -eux; \
         bash \
         ca-certificates \
         curl \
+        procps \
+        net-tools \
         iproute2; \
     rm -rf /var/lib/apt/lists/*
 
