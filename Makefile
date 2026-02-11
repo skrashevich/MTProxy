@@ -3,6 +3,11 @@ DEP	=	dep
 EXE = ${OBJ}/bin
 
 COMMIT := $(shell git log -1 --pretty=format:"%H")
+UNAME_S := $(shell uname -s)
+OPENSSL_CFLAGS ?= $(shell pkg-config --cflags openssl 2>/dev/null)
+OPENSSL_LIBS ?= $(shell pkg-config --libs openssl 2>/dev/null)
+EPOLL_SHIM_CFLAGS ?= $(shell pkg-config --cflags epoll-shim 2>/dev/null)
+EPOLL_SHIM_LIBS ?= $(shell pkg-config --libs epoll-shim 2>/dev/null)
 
 ARCH =
 ifeq ($m, 32)
@@ -12,8 +17,27 @@ ifeq ($m, 64)
 ARCH = -m64
 endif
 
-CFLAGS = $(ARCH) -O3 -std=gnu11 -Wall -Wno-array-bounds -mpclmul -march=core2 -mfpmath=sse -mssse3 -fno-strict-aliasing -fno-strict-overflow -fwrapv -DAES=1 -DCOMMIT=\"${COMMIT}\" -D_GNU_SOURCE=1 -D_FILE_OFFSET_BITS=64
-LDFLAGS = $(ARCH) -ggdb -rdynamic -lm -lrt -lcrypto -lz -lpthread -lcrypto
+COMMONFLAGS = -O3 -std=gnu11 -Wall -Wno-array-bounds -fno-strict-aliasing -fno-strict-overflow -fwrapv -DAES=1 -DCOMMIT=\"${COMMIT}\"
+
+ifeq ($(UNAME_S),Darwin)
+    OPENSSL_PREFIX ?= $(shell brew --prefix openssl@3 2>/dev/null || brew --prefix openssl 2>/dev/null)
+    ifneq ($(strip $(OPENSSL_PREFIX)),)
+        OPENSSL_CFLAGS += -I$(OPENSSL_PREFIX)/include
+        OPENSSL_LIBS += -L$(OPENSSL_PREFIX)/lib -Wl,-rpath,$(OPENSSL_PREFIX)/lib
+    endif
+    ifeq ($(strip $(OPENSSL_LIBS)),)
+        OPENSSL_LIBS = -lcrypto
+    endif
+    CFLAGS = $(ARCH) $(COMMONFLAGS) $(OPENSSL_CFLAGS) $(EPOLL_SHIM_CFLAGS)
+    LDFLAGS = $(ARCH) -ggdb -lm $(OPENSSL_LIBS) $(EPOLL_SHIM_LIBS) -lz -lpthread
+    AR_TOOL ?= /usr/bin/ar
+    RANLIB_TOOL ?= /usr/bin/ranlib
+else
+    CFLAGS = $(ARCH) $(COMMONFLAGS) -mpclmul -march=core2 -mfpmath=sse -mssse3 -D_GNU_SOURCE=1 -D_FILE_OFFSET_BITS=64
+    LDFLAGS = $(ARCH) -ggdb -rdynamic -lm -lrt -lcrypto -lz -lpthread
+    AR_TOOL ?= ar
+    RANLIB_TOOL ?= ranlib
+endif
 
 LIB = ${OBJ}/lib
 CINCLUDE = -iquote common -iquote .
@@ -91,13 +115,13 @@ ${LIB_OBJS_NORMAL}: ${OBJ}/%.o: %.c | create_dirs_and_headers
 ${EXELIST}: ${LIBLIST}
 
 ${EXE}/mtproto-proxy:	${OBJ}/mtproto/mtproto-proxy.o ${OBJ}/mtproto/mtproto-config.o ${OBJ}/net/net-tcp-rpc-ext-server.o
-	${CC} -o $@ $^ ${LIB}/libkdb.a ${LDFLAGS}
+	${CC} -o $@ $^ ${LDFLAGS}
 
 ${LIB}/libkdb.a: ${LIB_OBJS}
-	rm -f $@ && ar rcs $@ $^
+	rm -f $@ && ${AR_TOOL} rcs $@ $^
+	${RANLIB_TOOL} $@
 
 clean:
 	rm -rf ${OBJ} ${DEP} ${EXE} || true
 
 force-clean: clean
-

@@ -28,9 +28,16 @@
 
 #pragma once
 
-// GLIBC DEFINES RTMAX as function
-// engine_init () asserts, that OUT_SIGRTMAX == SIGRTMAX
-#define OUR_SIGRTMAX 64
+#include <signal.h>
+
+// GLIBC defines SIGRTMAX as function-like macro, keep local alias.
+#ifdef SIGRTMAX
+#define KDB_HAVE_SIGRT 1
+#define OUR_SIGRTMAX SIGRTMAX
+#else
+#define KDB_HAVE_SIGRT 0
+#define OUR_SIGRTMAX SIGUSR2
+#endif
 
 #include "common/common-stats.h"
 #include "engine/engine-rpc.h"

@@ -31,12 +31,12 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <sys/epoll.h>
 #include <sys/socket.h>
 #include <sys/uio.h>
 #include <time.h>
 #include <unistd.h>
 
+#include "common/epoll-compat.h"
 #include "crc32.h"
 #include "net/net-events.h"
 #include "kprintf.h"

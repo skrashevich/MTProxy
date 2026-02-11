@@ -134,7 +134,16 @@ void create_main_thread_pipe (void) {
     vkprintf (2, "%s: closing #%d pipe write end file descriptor.\n", __func__, pipe_write_end);
     close (pipe_write_end);
   }
+#ifdef __APPLE__
+  assert (pipe (p) >= 0);
+  int f0 = fcntl (p[0], F_GETFL, 0);
+  int f1 = fcntl (p[1], F_GETFL, 0);
+  assert (f0 >= 0 && f1 >= 0);
+  assert (fcntl (p[0], F_SETFL, f0 | O_NONBLOCK) >= 0);
+  assert (fcntl (p[1], F_SETFL, f1 | O_NONBLOCK) >= 0);
+#else
   assert (pipe2 (p, O_NONBLOCK) >= 0);
+#endif
   pipe_read_end = p[0];
   pipe_write_end = p[1];
 }
@@ -310,7 +319,11 @@ void server_init (conn_type_t *listen_connection_type, void *listen_connection_e
   ksignal (SIGINT,  sigint_handler);
   ksignal (SIGTERM, sigterm_handler);
   ksignal (SIGPIPE, empty_signal_handler);
+#ifdef SIGPOLL
   ksignal (SIGPOLL, empty_signal_handler);
+#elif defined(SIGIO)
+  ksignal (SIGIO, empty_signal_handler);
+#endif
 
   if (daemonize) {
     ksignal (SIGHUP, default_signal_handler);
@@ -525,20 +538,27 @@ void check_signal_handler (server_functions_t *F, int sig, void (*default_f)(voi
   }
 }
 
-unsigned long long default_signal_mask = SIG2INT(SIGHUP) | SIG2INT(SIGUSR1) | SIG2INT(OUR_SIGRTMAX) | SIG2INT(OUR_SIGRTMAX-1) | SIG2INT(OUR_SIGRTMAX-4) | SIG2INT(OUR_SIGRTMAX-8) | SIG2INT(OUR_SIGRTMAX-9);
+unsigned long long default_signal_mask = SIG2INT(SIGHUP) | SIG2INT(SIGUSR1);
 
 static void check_server_functions (void) /* {{{ */ {
   engine_t *E = engine_state;
   server_functions_t *F = E->F;
-  F->allowed_signals = (F->allowed_signals | default_signal_mask) & ~F->forbidden_signals;
+  unsigned long long signal_mask = default_signal_mask;
+#if KDB_HAVE_SIGRT
+  int sigrtmax = OUR_SIGRTMAX;
+  signal_mask |= SIG2INT(sigrtmax) | SIG2INT(sigrtmax - 1) | SIG2INT(sigrtmax - 4) | SIG2INT(sigrtmax - 8) | SIG2INT(sigrtmax - 9);
+#endif
+  F->allowed_signals = (F->allowed_signals | signal_mask) & ~F->forbidden_signals;
 
   check_signal_handler (F, SIGHUP, default_sighup);
   check_signal_handler (F, SIGUSR1, default_sigusr1);
+#if KDB_HAVE_SIGRT
   check_signal_handler (F, SIGRTMAX-9, default_sigrtmax_9);
   check_signal_handler (F, SIGRTMAX-8, default_sigrtmax_8);
   check_signal_handler (F, SIGRTMAX-4, default_sigrtmax_4);
   check_signal_handler (F, SIGRTMAX-1, default_sigrtmax_1);
   check_signal_handler (F, SIGRTMAX, default_sigrtmax);
+#endif
 
   if (!F->close_net_sockets) { F->close_net_sockets = default_close_network_sockets; }
   if (!F->cron) { F->cron = default_cron; }
@@ -573,8 +593,10 @@ void engine_startup (engine_t *E, server_functions_t *F) /* {{{ */ {
 
   precise_now_diff = get_utime_monotonic () - get_double_time ();
 
+#if KDB_HAVE_SIGRT
   assert (SIGRTMAX == OUR_SIGRTMAX);
   assert (SIGRTMAX - SIGRTMIN >= 20);
+#endif
   
   E->sfd = 0;
   E->epoll_wait_timeout = DEFAULT_EPOLL_WAIT_TIMEOUT;
@@ -718,4 +740,3 @@ int default_parse_option_func (int a) {
     return -1;
   }
 }
-

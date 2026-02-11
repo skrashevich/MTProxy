@@ -26,10 +26,6 @@
 
 #include <netinet/in.h>
 
-#ifndef EPOLLRDHUP
-#define EPOLLRDHUP 0x2000
-#endif
-
 #define	MAX_EVENTS		(1 << 19)
 
 #define	EVT_READ	4

@@ -531,7 +531,7 @@ static int update_domain_info (struct domain_info *info) {
       addr.sin_port = htons (443);
       memcpy (&addr.sin_addr, host->h_addr, sizeof (struct in_addr));
 
-      e_connect = connect (sockets[i], &addr, sizeof (addr));
+      e_connect = connect (sockets[i], (struct sockaddr *)&addr, sizeof (addr));
     } else {
       assert (sizeof (struct in6_addr) == sizeof (info->target_ipv6));
       info->target.s_addr = 0;
@@ -543,7 +543,7 @@ static int update_domain_info (struct domain_info *info) {
       addr.sin6_port = htons (443);
       memcpy (&addr.sin6_addr, host->h_addr, sizeof (struct in6_addr));
 
-      e_connect = connect (sockets[i], &addr, sizeof (addr));
+      e_connect = connect (sockets[i], (struct sockaddr *)&addr, sizeof (addr));
     }
 
     if (e_connect == -1 && errno != EINPROGRESS) {

@@ -35,17 +35,22 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <sys/epoll.h>
-#include <sys/io.h>
 #include <sys/socket.h>
 #include <time.h>
 #include <unistd.h>
 
 #include "engine/engine.h"
+#include "common/epoll-compat.h"
 #include "net/net-events.h"
 #include "kprintf.h"
 #include "precise-time.h"
 #include "vv/vv-io.h"
+
+#ifdef __APPLE__
+#ifndef TCP_KEEPIDLE
+#define TCP_KEEPIDLE TCP_KEEPALIVE
+#endif
+#endif
 
 
 /*
@@ -568,7 +573,12 @@ int server_socket (int port, struct in_addr in_addr, int backlog, int mode) {
   if (mode & SM_UDP) {
     maximize_sndbuf (socket_fd, 0);
     maximize_rcvbuf (socket_fd, 0);
+#ifdef IP_RECVERR
+#ifndef SOL_IP
+#define SOL_IP IPPROTO_IP
+#endif
     setsockopt (socket_fd, SOL_IP, IP_RECVERR, &flags, sizeof (flags));
+#endif
   } else {
     setsockopt (socket_fd, SOL_SOCKET, SO_REUSEADDR, &flags, sizeof (flags));
     if (tcp_maximize_buffers) {
@@ -644,7 +654,12 @@ int client_socket (in_addr_t in_addr, int port, int mode) {
   if (mode & SM_UDP) {
     maximize_sndbuf (socket_fd, 0);
     maximize_rcvbuf (socket_fd, 0);
+#ifdef IP_RECVERR
+#ifndef SOL_IP
+#define SOL_IP IPPROTO_IP
+#endif
     setsockopt (socket_fd, SOL_IP, IP_RECVERR, &flags, sizeof (flags));
+#endif
   } else {
     setsockopt (socket_fd, SOL_SOCKET, SO_REUSEADDR, &flags, sizeof (flags));
     if (tcp_maximize_buffers) {

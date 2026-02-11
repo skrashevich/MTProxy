@@ -32,8 +32,10 @@
 #include <time.h>
 #include <unistd.h>
 
+#if !defined(__APPLE__)
 #include <linux/futex.h>
 #include <sys/syscall.h>
+#endif
 
 #include "server-functions.h"
 #include "kprintf.h"
@@ -118,6 +120,7 @@ int get_this_thread_id (void) {
 
 /* custom semaphore implementation using futexes */
 
+#if !defined(__APPLE__)
 int mp_sem_post (mp_sem_t *sem) {
   __sync_fetch_and_add (&sem->value, 1);
   if (sem->waiting > 0) {
@@ -161,6 +164,7 @@ int mp_sem_trywait (mp_sem_t *sem) {
   }
   return -1;
 }
+#endif
 
 /* functions for one mp_queue_block */
 

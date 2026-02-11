@@ -30,6 +30,12 @@ typedef int v4si __attribute__ ((vector_size (16)));
 typedef double v2df __attribute__ ((vector_size (16)));
 typedef float v4sf __attribute__ ((vector_size (16)));
 
+#if defined(__i386__) || defined(__x86_64__)
+#define KDB_IS_X86 1
+#else
+#define KDB_IS_X86 0
+#endif
+
 typedef struct {
   int magic;
   int ebx, ecx, edx;

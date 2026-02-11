@@ -34,6 +34,12 @@ static __inline__ unsigned long long rdtsc(void) {
   __asm__ __volatile__ ("rdtsc" : "=a"(lo), "=d"(hi));
   return ( (unsigned long long)lo)|( ((unsigned long long)hi)<<32 );
 }
+#else
+static __inline__ unsigned long long rdtsc(void) {
+  struct timespec ts;
+  clock_gettime (CLOCK_MONOTONIC, &ts);
+  return (unsigned long long) ts.tv_sec * 1000000000ull + (unsigned long long) ts.tv_nsec;
+}
 #endif
 
 /* net-event.h */

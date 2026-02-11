@@ -1,0 +1,71 @@
+name: Build and Smoke Test
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+      - master
+  workflow_dispatch:
+
+jobs:
+  build-and-smoke:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Linux
+            os: ubuntu-latest
+          - name: macOS ARM64
+            os: macos-14
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install dependencies (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential pkg-config libssl-dev zlib1g-dev
+
+      - name: Install dependencies (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          brew install openssl@3 zlib epoll-shim pkg-config make
+
+      - name: Verify macOS runner architecture
+        if: runner.os == 'macOS'
+        run: test "$(uname -m)" = "arm64"
+
+      - name: Build
+        run: |
+          if [[ "$RUNNER_OS" == "Linux" ]]; then
+            JOBS="$(nproc)"
+          else
+            JOBS="$(sysctl -n hw.ncpu)"
+          fi
+          make clean
+          make -j"$JOBS"
+
+      - name: Smoke test binary
+        shell: bash
+        run: |
+          set -euo pipefail
+          BIN="./objs/bin/mtproto-proxy"
+          test -x "$BIN"
+
+          set +e
+          "$BIN" --help >help.txt 2>&1
+          code=$?
+          set -e
+
+          if [[ "$code" -ne 0 && "$code" -ne 2 ]]; then
+            cat help.txt
+            echo "Unexpected exit code: $code"
+            exit "$code"
+          fi
+
+          grep -Eq "usage:|Simple MT-Proto proxy|mtproxy" help.txt

@@ -13,6 +13,10 @@ On CentOS/RHEL:
 yum install openssl-devel zlib-devel
 yum groupinstall "Development Tools"
 ```
+On macOS (Homebrew):
+```bash
+brew install openssl@3 zlib epoll-shim make gcc
+```
 
 Clone the repo:
 ```bash
@@ -24,6 +28,10 @@ To build, simply run `make`, the binary will be in `objs/bin/mtproto-proxy`:
 
 ```bash
 make && cd objs/bin
+```
+On macOS with Homebrew GCC:
+```bash
+CC=gcc-15 gmake && cd objs/bin
 ```
 
 If the build has failed, you should run `make clean` before building it again.

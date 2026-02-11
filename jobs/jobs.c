@@ -31,12 +31,11 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <stdint.h>
 #include <time.h>
 #include <unistd.h>
-#include <malloc.h>
 #include <sys/syscall.h>
 #include <math.h>
-#include <linux/futex.h>
 
 #include "common/proc-stat.h"
 #include "crc32.h"
@@ -53,6 +52,34 @@
 //#include "auto/engine/engine.h"
 
 #define JOB_SUBCLASS_OFFSET 3
+
+#if defined(__APPLE__)
+#define JOB_INTERRUPT_SIGNAL SIGUSR2
+static inline int kdb_srand48_r (long int seed, kdb_drand48_data_t *buffer) {
+  buffer->xsubi[0] = 0x330e;
+  buffer->xsubi[1] = (unsigned short) (seed & 0xffff);
+  buffer->xsubi[2] = (unsigned short) ((seed >> 16) & 0xffff);
+  return 0;
+}
+static inline int kdb_lrand48_r (kdb_drand48_data_t *buffer, long int *result) {
+  *result = nrand48 (buffer->xsubi);
+  return 0;
+}
+static inline int kdb_mrand48_r (kdb_drand48_data_t *buffer, long int *result) {
+  *result = jrand48 (buffer->xsubi);
+  return 0;
+}
+static inline int kdb_drand48_r (kdb_drand48_data_t *buffer, double *result) {
+  *result = erand48 (buffer->xsubi);
+  return 0;
+}
+#else
+#define JOB_INTERRUPT_SIGNAL (SIGRTMAX - 7)
+#define kdb_srand48_r srand48_r
+#define kdb_lrand48_r lrand48_r
+#define kdb_mrand48_r mrand48_r
+#define kdb_drand48_r drand48_r
+#endif
 
 struct job_thread JobThreads[MAX_JOB_THREADS] __attribute__((aligned(128)));
 
@@ -371,7 +398,7 @@ __thread job_t this_job;
 long int lrand48_j (void) {
   if (this_job_thread) {
     long int t;
-    lrand48_r (&this_job_thread->rand_data, &t);
+    kdb_lrand48_r (&this_job_thread->rand_data, &t);
     return t;
   } else {
     return lrand48 ();
@@ -381,7 +408,7 @@ long int lrand48_j (void) {
 long int mrand48_j (void) {
   if (this_job_thread) {
     long int t;
-    mrand48_r (&this_job_thread->rand_data, &t);
+    kdb_mrand48_r (&this_job_thread->rand_data, &t);
     return t;
   } else {
     return mrand48 ();
@@ -391,7 +418,7 @@ long int mrand48_j (void) {
 double drand48_j (void) {
   if (this_job_thread) {
     double t;
-    drand48_r (&this_job_thread->rand_data, &t);
+    kdb_drand48_r (&this_job_thread->rand_data, &t);
     return t;
   } else {
     return drand48 ();
@@ -463,7 +490,7 @@ int create_job_thread_ex (int thread_class, void *(*thread_work)(void *)) {
   JT->id = i;
   assert (JT->job_queue);
 
-  srand48_r (rdtsc () ^ lrand48 (), &JT->rand_data);
+  kdb_srand48_r (rdtsc () ^ lrand48 (), &JT->rand_data);
 
 
   if (thread_class != JC_MAIN) {
@@ -712,7 +739,7 @@ int unlock_job (JOB_REF_ARG (job)) {
         vkprintf (JOBS_DEBUG, "sub=%p\n", JT->job_class->subclasses);
         mpq_push_w (JQ, PTR_MOVE (job), 0);
         if (JQ == &MainJobQueue && main_thread_interrupt_status == 1 && __sync_fetch_and_add (&main_thread_interrupt_status, 1) == 1) {
-          //pthread_kill (main_pthread_id, SIGRTMAX - 7);
+          //pthread_kill (main_pthread_id, JOB_INTERRUPT_SIGNAL);
           vkprintf (JOBS_DEBUG, "WAKING UP MAIN THREAD\n");
           wakeup_main_thread ();
         }
@@ -761,7 +788,7 @@ void job_send_signals (JOB_REF_ARG (job), int sigset) {
   } else {
     if (job->j_flags & JF_SIGINT) {
       assert (job->j_thread);
-      pthread_kill (job->j_thread->pthread_id, SIGRTMAX - 7);
+      pthread_kill (job->j_thread->pthread_id, JOB_INTERRUPT_SIGNAL);
     }
     job_decref (JOB_REF_PASS (job));
   }
@@ -866,7 +893,7 @@ void complete_job (job_t job) {
 static void job_interrupt_signal_handler (const int sig) {
   char buffer[256];
   if (verbosity >= 2) {
-    kwrite (2, buffer, sprintf (buffer, "SIGRTMAX-7 (JOB INTERRUPT) caught in thread #%d running job %p.\n", this_job_thread ? this_job_thread->id : -1, this_job_thread ? this_job_thread->current_job : 0));
+    kwrite (2, buffer, sprintf (buffer, "JOB INTERRUPT (%d) caught in thread #%d running job %p.\n", JOB_INTERRUPT_SIGNAL, this_job_thread ? this_job_thread->id : -1, this_job_thread ? this_job_thread->current_job : 0));
   }
 }
 
@@ -876,7 +903,7 @@ static void set_job_interrupt_signal_handler (void) {
   act.sa_flags = 0;
   act.sa_handler = job_interrupt_signal_handler;
 
-  if (sigaction (SIGRTMAX - 7, &act, NULL) != 0) {
+  if (sigaction (JOB_INTERRUPT_SIGNAL, &act, NULL) != 0) {
     kwrite (2, "failed sigaction\n", 17);
     _exit (EXIT_FAILURE);
   }
@@ -889,7 +916,11 @@ void *job_thread_ex (void *arg, void (*work_one)(void *, int)) {
   assert (!(JT->thread_class & ~JC_MASK));
 
   get_this_thread_id ();
-  JT->thread_system_id = syscall (SYS_gettid);
+#if defined(__APPLE__)
+  JT->thread_system_id = getpid ();
+#else
+  JT->thread_system_id = (int) syscall (SYS_gettid);
+#endif
 
   set_job_interrupt_signal_handler ();
 

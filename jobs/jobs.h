@@ -54,6 +54,14 @@ struct job_thread;
 struct async_job;
 typedef struct async_job *job_t;
 
+#ifdef __APPLE__
+typedef struct {
+  unsigned short xsubi[3];
+} kdb_drand48_data_t;
+#else
+typedef struct drand48_data kdb_drand48_data_t;
+#endif
+
 typedef int (*job_function_t)(job_t job, int op, struct job_thread *JT);
 
 extern __thread struct job_thread *this_job_thread;
@@ -232,7 +240,7 @@ struct job_thread {
   long long jobs_created;
   long long jobs_active;
   int thread_system_id;
-  struct drand48_data rand_data;
+  kdb_drand48_data_t rand_data;
   job_t timer_manager;
   double wakeup_time;
   struct job_class *job_class;
@@ -469,4 +477,3 @@ extern struct job_thread JobThreads[];
   void CNCT(jobs_module_register_,MODULE) (void) { \
     register_thread_callback (&CNCT(MODULE,_thread_callback)); \
   }
-
