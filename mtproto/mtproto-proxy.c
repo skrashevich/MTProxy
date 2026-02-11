@@ -432,6 +432,12 @@ void mtfront_on_secret_connection_open (int secret_id) {
   }
 }
 
+void mtfront_on_secret_connection_close (int secret_id) {
+  if (secret_id >= 0 && secret_id < MAX_MTFRONT_SECRETS) {
+    __sync_fetch_and_add (&active_connections_per_secret[secret_id], -1);
+  }
+}
+
 static void update_local_stats_copy (struct worker_stats *S) {
   S->cnt++;
   __sync_synchronize();
@@ -1110,9 +1116,9 @@ int mtproto_ext_rpc_close (connection_job_t C, int who) {
   assert ((unsigned) CONN_INFO(C)->fd < MAX_CONNECTIONS);
   vkprintf (3, "ext_rpc connection closing (%d) by %d\n", CONN_INFO(C)->fd, who);
   struct tcp_rpc_data *D = TCP_RPC_DATA(C);
-  int secret_id = D->extra_int2 - 1;
-  if (D->extra_int3 && secret_id >= 0 && secret_id < MAX_MTFRONT_SECRETS) {
-    __sync_fetch_and_add (&active_connections_per_secret[secret_id], -1);
+  if (D->extra_int3) {
+    int secret_id = D->extra_int2 - 1;
+    mtfront_on_secret_connection_close (secret_id);
     D->extra_int3 = 0;
   }
   D->extra_int2 = 0;
