@@ -81,6 +81,7 @@ const char FullVersionStr[] = VERSION_STR " compiled at " __DATE__ " " __TIME__ 
 #define EXT_CONN_TABLE_SIZE	(1 << 22)
 #define EXT_CONN_HASH_SHIFT	20
 #define EXT_CONN_HASH_SIZE	(1 << EXT_CONN_HASH_SHIFT)
+#define SECRET_DEVICE_HASH_SIZE	(1 << 14)
 
 #define	RPC_TIMEOUT_INTERVAL	5.0
 
@@ -182,6 +183,8 @@ struct ext_connection {
   long long in_conn_id;
   long long out_conn_id;
   long long auth_key_id;
+  long long tracked_auth_key_id;
+  int tracked_secret_id;
   struct ext_connection *lru_prev, *lru_next;
 };
 
@@ -190,11 +193,20 @@ struct ext_connection_ref {
   long long out_conn_id;
 };
 
+struct secret_device_ref {
+  struct secret_device_ref *next;
+  int secret_id;
+  long long auth_key_id;
+  int connections;
+};
+
 long long ext_connections, ext_connections_created;
 
 struct ext_connection_ref OutExtConnections[EXT_CONN_TABLE_SIZE];
 struct ext_connection *InExtConnectionHash[EXT_CONN_HASH_SIZE];
 struct ext_connection ExtConnectionHead[MAX_CONNECTIONS];
+static struct secret_device_ref *SecretDeviceHash[SECRET_DEVICE_HASH_SIZE];
+static int active_connections_per_secret[MAX_MTFRONT_SECRETS];
 
 void lru_delete_ext_conn (struct ext_connection *Ext);
 
@@ -205,6 +217,79 @@ static inline void check_engine_class (void) {
 static inline int ext_conn_hash (int in_fd, long long in_conn_id) {
   unsigned long long h = (unsigned long long) in_fd * 11400714819323198485ULL + (unsigned long long) in_conn_id * 13043817825332782213ULL;
   return (h >> (64 - EXT_CONN_HASH_SHIFT));
+}
+
+static inline int secret_device_hash (int secret_id, long long auth_key_id) {
+  unsigned long long h = (unsigned long long) secret_id * 11400714819323198485ULL + (unsigned long long) auth_key_id * 13043817825332782213ULL;
+  return h & (SECRET_DEVICE_HASH_SIZE - 1);
+}
+
+static struct secret_device_ref **get_secret_device_ref_ptr (int secret_id, long long auth_key_id) {
+  int h = secret_device_hash (secret_id, auth_key_id);
+  struct secret_device_ref **cur = &SecretDeviceHash[h];
+  while (*cur && ((*cur)->secret_id != secret_id || (*cur)->auth_key_id != auth_key_id)) {
+    cur = &(*cur)->next;
+  }
+  return cur;
+}
+
+static void mtfront_untrack_secret_device (struct ext_connection *Ex) {
+  check_engine_class ();
+  if (!Ex->tracked_auth_key_id) {
+    return;
+  }
+
+  int secret_id = Ex->tracked_secret_id;
+  long long auth_key_id = Ex->tracked_auth_key_id;
+  Ex->tracked_secret_id = 0;
+  Ex->tracked_auth_key_id = 0;
+
+  if (secret_id < 0 || secret_id >= MAX_MTFRONT_SECRETS) {
+    return;
+  }
+
+  struct secret_device_ref **ref_ptr = get_secret_device_ref_ptr (secret_id, auth_key_id);
+  struct secret_device_ref *ref = *ref_ptr;
+  if (!ref) {
+    vkprintf (1, "can't find tracked secret device ref: secret_id=%d auth_key_id=%016llx\n", secret_id, auth_key_id);
+    return;
+  }
+
+  assert (ref->connections > 0);
+  if (--ref->connections == 0) {
+    *ref_ptr = ref->next;
+    free (ref);
+    assert (active_connections_per_secret[secret_id] > 0);
+    --active_connections_per_secret[secret_id];
+  }
+}
+
+static void mtfront_track_secret_device (struct ext_connection *Ex, int secret_id, long long auth_key_id) {
+  check_engine_class ();
+
+  if (Ex->tracked_auth_key_id == auth_key_id && Ex->tracked_secret_id == secret_id) {
+    return;
+  }
+  mtfront_untrack_secret_device (Ex);
+
+  if (secret_id < 0 || secret_id >= MAX_MTFRONT_SECRETS || !auth_key_id) {
+    return;
+  }
+
+  struct secret_device_ref **ref_ptr = get_secret_device_ref_ptr (secret_id, auth_key_id);
+  struct secret_device_ref *ref = *ref_ptr;
+  if (!ref) {
+    ref = calloc (1, sizeof (*ref));
+    assert (ref);
+    ref->secret_id = secret_id;
+    ref->auth_key_id = auth_key_id;
+    ref->next = *ref_ptr;
+    *ref_ptr = ref;
+    ++active_connections_per_secret[secret_id];
+  }
+  ++ref->connections;
+  Ex->tracked_secret_id = secret_id;
+  Ex->tracked_auth_key_id = auth_key_id;
 }
 
 // makes sense only for !IS_PROXY_IN
@@ -236,6 +321,7 @@ struct ext_connection *get_ext_connection_by_in_conn_id (int in_fd, int in_gen, 
       if (mode != 1) {
 	return 0;
       }
+      mtfront_untrack_secret_device (cur);
       if (cur->i_next) {
 	cur->i_next->i_prev = cur->i_prev;
 	cur->i_prev->i_next = cur->i_next;
@@ -424,18 +510,13 @@ long long mtproto_proxy_errors;
 char proxy_tag[16];
 int proxy_tag_set;
 static int secret_count;
-static int active_connections_per_secret[MAX_MTFRONT_SECRETS];
 
 void mtfront_on_secret_connection_open (int secret_id) {
-  if (secret_id >= 0 && secret_id < MAX_MTFRONT_SECRETS) {
-    __sync_fetch_and_add (&active_connections_per_secret[secret_id], 1);
-  }
+  (void) secret_id;
 }
 
 void mtfront_on_secret_connection_close (int secret_id) {
-  if (secret_id >= 0 && secret_id < MAX_MTFRONT_SECRETS) {
-    __sync_fetch_and_add (&active_connections_per_secret[secret_id], -1);
-  }
+  (void) secret_id;
 }
 
 static void update_local_stats_copy (struct worker_stats *S) {
@@ -1762,16 +1843,18 @@ int forward_mtproto_packet (struct tl_in_state *tlio_in, connection_job_t C, int
 int forward_tcp_query (struct tl_in_state *tlio_in, connection_job_t c, conn_target_job_t S, int flags, long long auth_key_id, int remote_ip_port[5], int our_ip_port[5]) {
   connection_job_t d = 0;
   int c_fd = CONN_INFO(c)->fd;
+  int secret_id = -1;
   struct ext_connection *Ex = get_ext_connection_by_in_fd (c_fd);
 
   if (CONN_INFO(c)->type == &ct_tcp_rpc_ext_server_mtfront) {
     flags |= TCP_RPC_DATA(c)->flags & RPC_F_DROPPED;
     flags |= 0x1000;
+    secret_id = TCP_RPC_DATA(c)->extra_int2 - 1;
   } else if (CONN_INFO(c)->type == &ct_http_server_mtfront) {
     flags |= 0x3005;
   }
 
-  if (Ex && Ex->auth_key_id != auth_key_id) {
+  if (auth_key_id && Ex && Ex->auth_key_id != auth_key_id) {
     Ex->auth_key_id = auth_key_id;
   }
 
@@ -1818,6 +1901,7 @@ int forward_tcp_query (struct tl_in_state *tlio_in, connection_job_t c, conn_tar
   tot_forwarded_queries++;
 
   assert (Ex);
+  mtfront_track_secret_device (Ex, secret_id, Ex->auth_key_id);
 
   vkprintf (3, "forwarding user query from connection %d~%d (ext_conn_id %llx) into connection %d~%d (ext_conn_id %llx)\n", Ex->in_fd, Ex->in_gen, Ex->in_conn_id, Ex->out_fd, Ex->out_gen, Ex->out_conn_id);
 
