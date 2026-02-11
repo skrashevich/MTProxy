@@ -155,6 +155,11 @@ void mtfront_on_secret_connection_open (int secret_id) {
   (void) secret_id;
 }
 
+void mtfront_on_secret_connection_close (int secret_id) __attribute__ ((weak));
+void mtfront_on_secret_connection_close (int secret_id) {
+  (void) secret_id;
+}
+
 void tcp_rpcs_set_ext_secret (unsigned char secret[16]) {
   assert (ext_secret_cnt < 16);
   memcpy (ext_secret[ext_secret_cnt ++], secret, 16);
@@ -944,6 +949,15 @@ static int is_allowed_timestamp (int timestamp) {
 static int proxy_connection (connection_job_t C, const struct domain_info *info) {
   struct connection_info *c = CONN_INFO(C);
   assert (check_conn_functions (&ct_proxy_pass, 0) >= 0);
+
+  // Decrement per-secret connection counter before switching to proxy_pass,
+  // because tcp_proxy_pass_close won't call mtproto_ext_rpc_close
+  struct tcp_rpc_data *D = TCP_RPC_DATA(C);
+  if (D->extra_int3) {
+    int secret_id = D->extra_int2 - 1;
+    mtfront_on_secret_connection_close (secret_id);
+    D->extra_int3 = 0;
+  }
 
   const char zero[16] = {};
   if (info->target.s_addr == 0 && !memcmp (info->target_ipv6, zero, 16)) {
