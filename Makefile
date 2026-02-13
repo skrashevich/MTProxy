@@ -51,7 +51,7 @@ DEPDIRS := ${DEP} $(addprefix ${DEP}/,${PROJECTS})
 ALLDIRS := ${DEPDIRS} ${OBJDIRS}
 
 
-.PHONY:	all clean 
+.PHONY:	all clean go-build go-test go-smoke
 
 EXELIST	:= ${EXE}/mtproto-proxy
 
@@ -125,3 +125,48 @@ clean:
 	rm -rf ${OBJ} ${DEP} ${EXE} || true
 
 force-clean: clean
+
+go-build:
+	mkdir -p ${EXE}
+	go build -o ${EXE}/mtproto-proxy-go ./cmd/mtproto-proxy
+
+go-test:
+	go test ./...
+
+go-smoke: go-build
+	@bash -euo pipefail -c '\
+		${EXE}/mtproto-proxy-go --help > help.txt 2>&1 || test $$? -eq 2; \
+		${EXE}/mtproto-proxy-go ./docker/telegram/backend.conf > config-check.txt 2>&1 || test $$? -eq 2; \
+		: > loop.log; \
+		MTPROXY_GO_SIGNAL_LOOP=1 ${EXE}/mtproto-proxy-go -l loop.log ./docker/telegram/backend.conf > /dev/null 2>&1 & \
+		pid=$$!; \
+		for _ in $$(seq 1 30); do \
+			if grep -q "runtime initialized:" loop.log; then \
+				break; \
+			fi; \
+			sleep 0.1; \
+		done; \
+		kill -USR1 $$pid; \
+		sleep 0.1; \
+		kill -TERM $$pid; \
+		wait $$pid; \
+		grep -q "SIGUSR1 received: log file reopened." loop.log; \
+		grep -q "Terminated by SIGTERM." loop.log; \
+		: > supervisor.log; \
+		MTPROXY_GO_SIGNAL_LOOP=1 ${EXE}/mtproto-proxy-go -M 2 -l supervisor.log ./docker/telegram/backend.conf > /dev/null 2>&1 & \
+		spid=$$!; \
+		for _ in $$(seq 1 50); do \
+			if grep -q "supervisor started worker id=1" supervisor.log; then \
+				break; \
+			fi; \
+			sleep 0.1; \
+		done; \
+		kill -USR1 $$spid; \
+		sleep 0.1; \
+		kill -TERM $$spid; \
+		wait $$spid; \
+		grep -q "Go bootstrap supervisor enabled: workers=2" supervisor.log; \
+		grep -q "supervisor SIGUSR1: log file reopened." supervisor.log; \
+		grep -q "supervisor received SIGTERM, shutting down workers" supervisor.log; \
+		rm -f help.txt config-check.txt loop.log supervisor.log; \
+	'

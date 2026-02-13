@@ -36,6 +36,37 @@ CC=gcc-15 gmake && cd objs/bin
 
 If the build has failed, you should run `make clean` before building it again.
 
+## Go migration bootstrap (work in progress)
+The repository now contains an in-progress Go implementation scaffold in `cmd/mtproto-proxy`.
+
+Build and test Go code:
+```bash
+make go-test
+make go-build
+```
+
+Run Go bootstrap config check:
+```bash
+./objs/bin/mtproto-proxy-go ./docker/telegram/backend.conf
+```
+
+Run Go bootstrap signal loop (reload/shutdown scaffold):
+```bash
+MTPROXY_GO_SIGNAL_LOOP=1 ./objs/bin/mtproto-proxy-go ./docker/telegram/backend.conf
+```
+
+Run Go loop with reopenable log file (send `SIGUSR1` to reopen, `SIGHUP` to reload config):
+```bash
+MTPROXY_GO_SIGNAL_LOOP=1 ./objs/bin/mtproto-proxy-go -l ./mtproxy-go.log ./docker/telegram/backend.conf
+```
+
+Run Go loop with supervisor mode (`-M` workers, signal forwarding scaffold):
+```bash
+MTPROXY_GO_SIGNAL_LOOP=1 ./objs/bin/mtproto-proxy-go -M 2 -l ./mtproxy-go.log ./docker/telegram/backend.conf
+```
+
+In supervisor mode with `--http-stats`, only `worker 0` binds the stats endpoint to avoid port conflicts.
+
 ## Running
 1. Obtain a secret, used to connect to telegram servers.
 ```bash

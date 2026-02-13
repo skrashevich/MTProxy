@@ -1,0 +1,140 @@
+name: Go Build and Smoke Test
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+      - master
+  workflow_dispatch:
+
+jobs:
+  go-build-and-smoke:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Linux
+            os: ubuntu-latest
+          - name: macOS ARM64
+            os: macos-14
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Unit tests
+        run: go test ./...
+
+      - name: Build Go proxy bootstrap binary
+        run: go build -o ./mtproto-proxy-go ./cmd/mtproto-proxy
+
+      - name: Smoke test Go binary
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          set +e
+          ./mtproto-proxy-go --help > help.txt 2>&1
+          code=$?
+          set -e
+
+          if [[ "$code" -ne 2 ]]; then
+            cat help.txt
+            echo "Unexpected exit code: $code"
+            exit "$code"
+          fi
+
+          grep -Eq "usage:|Simple MT-Proto proxy|mtproxy" help.txt
+
+      - name: Smoke test Go config parser
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          set +e
+          ./mtproto-proxy-go ./docker/telegram/backend.conf > config-check.txt 2>&1
+          code=$?
+          set -e
+
+          if [[ "$code" -ne 2 ]]; then
+            cat config-check.txt
+            echo "Unexpected exit code: $code"
+            exit "$code"
+          fi
+
+          grep -Eq "config loaded|runtime is not implemented yet" config-check.txt
+
+      - name: Smoke test Go signal loop
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          : > loop.log
+          MTPROXY_GO_SIGNAL_LOOP=1 ./mtproto-proxy-go -l loop.log ./docker/telegram/backend.conf > /dev/null 2>&1 &
+          pid=$!
+
+          for _ in $(seq 1 30); do
+            if grep -q "runtime initialized:" loop.log; then
+              break
+            fi
+            sleep 0.1
+          done
+
+          kill -USR1 "$pid"
+          sleep 0.1
+          kill -TERM "$pid"
+          set +e
+          wait "$pid"
+          code=$?
+          set -e
+
+          if [[ "$code" -ne 0 ]]; then
+            cat loop.log
+            echo "Unexpected loop exit code: $code"
+            exit "$code"
+          fi
+
+          grep -Eq "SIGUSR1 received: log file reopened\\." loop.log
+          grep -Eq "Terminated by SIGTERM\\." loop.log
+
+      - name: Smoke test Go supervisor mode (-M)
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          : > supervisor.log
+          MTPROXY_GO_SIGNAL_LOOP=1 ./mtproto-proxy-go -M 2 -l supervisor.log ./docker/telegram/backend.conf > /dev/null 2>&1 &
+          pid=$!
+
+          for _ in $(seq 1 50); do
+            if grep -q "supervisor started worker id=1" supervisor.log; then
+              break
+            fi
+            sleep 0.1
+          done
+
+          kill -USR1 "$pid"
+          sleep 0.1
+          kill -TERM "$pid"
+          set +e
+          wait "$pid"
+          code=$?
+          set -e
+
+          if [[ "$code" -ne 0 ]]; then
+            cat supervisor.log
+            echo "Unexpected supervisor loop exit code: $code"
+            exit "$code"
+          fi
+
+          grep -Eq "Go bootstrap supervisor enabled: workers=2" supervisor.log
+          grep -Eq "supervisor SIGUSR1: log file reopened\\." supervisor.log
+          grep -Eq "supervisor received SIGTERM, shutting down workers" supervisor.log
