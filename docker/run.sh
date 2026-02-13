@@ -53,34 +53,21 @@ load_secrets_from_file () {
 }
 
 SECRET_FILE_CMD="--mtproto-secret-file /data/secret"
-if [ ! -z "$SECRET_FILE" ]; then
-  echo "[+] Using secrets from file: '$SECRET_FILE'."
-  load_secrets_from_file "$SECRET_FILE" || exit 1
-elif [ ! -z "$SECRET" ]; then
-  echo "[+] Using the explicitly passed secret list from SECRET."
-  if ! echo "$SECRET" | grep -qE '^[0-9a-fA-F]{32}(,[0-9a-fA-F]{32}){0,127}$'; then
-    echo '[F] Bad secret format: should be 32 hex chars (for 16 bytes) for every secret; secrets should be comma-separated.'
-    exit 1
-  fi
-  SECRET="$(echo "$SECRET" | tr '[:upper:]' '[:lower:]')"
-elif [ -f /data/secret ]; then
+if [ -s /data/secret ]; then
   echo "[+] Using secrets from /data/secret."
   load_secrets_from_file /data/secret || exit 1
 else
-  if [[ ! -z "$SECRET_COUNT" ]]; then
-    if [[ ! ( "$SECRET_COUNT" -ge 1 &&  "$SECRET_COUNT" -le "$MAX_SECRETS" ) ]]; then
-      echo "[F] Can generate between 1 and $MAX_SECRETS secrets."
-      exit 5
-    fi
-  else
-    SECRET_COUNT="1"
+  if [ -z "$SECRET" ]; then
+    echo '[F] /data/secret is empty or missing and SECRET env var is not set.'
+    exit 1
   fi
 
-  echo "[+] No secret passed. Will generate $SECRET_COUNT random ones."
-  SECRET="$(dd if=/dev/urandom bs=16 count=1 2>&1 | od -tx1  | head -n1 | tail -c +9 | tr -d ' ')"
-  for pass in $(seq 2 $SECRET_COUNT); do
-    SECRET="$SECRET,$(dd if=/dev/urandom bs=16 count=1 2>&1 | od -tx1  | head -n1 | tail -c +9 | tr -d ' ')"
-  done
+  echo "[+] Using secrets from SECRET env."
+  if ! echo "$SECRET" | grep -qE '^[0-9a-fA-F]{32}(,[0-9a-fA-F]{32}){0,127}$'; then
+    echo '[F] Bad SECRET format: should be 32 hex chars (for 16 bytes) for every secret; secrets should be comma-separated.'
+    exit 1
+  fi
+  SECRET="$(echo "$SECRET" | tr '[:upper:]' '[:lower:]')"
 fi
 
 if echo "$SECRET" | grep -qE '^[0-9a-fA-F]{32}(,[0-9a-fA-F]{32}){0,127}$'; then

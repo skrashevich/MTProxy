@@ -116,4 +116,4 @@ systemctl enable MTProxy.service
 ## Docker image
 Telegram is also providing [official Docker image](https://hub.docker.com/r/telegrammessenger/proxy/).
 Note: the image is outdated.
-The bundled `docker/run.sh` supports `SECRET_FILE=/path/to/secrets.txt` and passes secrets via `--mtproto-secret-file` to avoid long command lines.
+The bundled `docker/run.sh` loads secrets from `/data/secret` when that file exists and is non-empty; otherwise it uses `SECRET` env (comma-separated list), and passes them via `--mtproto-secret-file`.
