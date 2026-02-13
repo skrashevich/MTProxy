@@ -53,12 +53,17 @@ head -c 16 /dev/urandom | xxd -ps
 ```bash
 ./mtproto-proxy -u nobody -p 8888 -H 443 -S <secret> --aes-pwd proxy-secret proxy-multi.conf -M 1
 ```
+or use a file with secret(s):
+```bash
+./mtproto-proxy -u nobody -p 8888 -H 443 --mtproto-secret-file /path/to/mtproto-secrets.txt --aes-pwd proxy-secret proxy-multi.conf -M 1
+```
 ... where:
 - `nobody` is the username. `mtproto-proxy` calls `setuid()` to drop privileges.
 - `443` is the port, used by clients to connect to the proxy.
 - `8888` is the local port. You can use it to get statistics from `mtproto-proxy`. Like `wget localhost:8888/stats`. You can only get this stat via loopback.
 - `<secret>` is the secret generated at step 3. Also you can set multiple secrets: `-S <secret1> -S <secret2>`.
   For a large list of secrets, use `--mtproto-secret-file /path/to/secrets.txt` (secrets can be comma- or whitespace-separated, `#` starts a comment line fragment).
+- `--mtproto-secret-file` is an alternative to `-S` and allows loading secret(s) from a file (secrets must be in the same 32-hex format as `-S`).
 - `proxy-secret` and `proxy-multi.conf` are obtained at steps 1 and 2.
 - `1` is the number of workers. You can increase the number of workers, if you have a powerful server.
 
