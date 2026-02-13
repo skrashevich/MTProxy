@@ -11,16 +11,65 @@ echo "####"
 echo "#### Telegram Proxy"
 echo "####"
 echo
-SECRET_CMD=""
-if [ ! -z "$SECRET" ]; then
-  echo "[+] Using the explicitly passed secret: '$SECRET'."
+MAX_SECRETS=128
+
+load_secrets_from_file () {
+  local file="$1"
+  local count=0
+  local parsed=""
+  local token
+
+  if [ ! -f "$file" ]; then
+    echo "[F] Secret file '$file' does not exist."
+    return 1
+  fi
+
+  while IFS= read -r token; do
+    [ -z "$token" ] && continue
+    if ! echo "$token" | grep -qE '^[0-9a-fA-F]{32}$'; then
+      echo "[F] Bad secret format in '$file': '$token'. Should be 32 hex chars."
+      return 1
+    fi
+    token="$(echo "$token" | tr '[:upper:]' '[:lower:]')"
+    if [ -z "$parsed" ]; then
+      parsed="$token"
+    else
+      parsed="$parsed,$token"
+    fi
+    count=$((count+1))
+    if [ "$count" -gt "$MAX_SECRETS" ]; then
+      echo "[F] Too many secrets in '$file'. Can use between 1 and $MAX_SECRETS secrets."
+      return 1
+    fi
+  done < <(awk '{ sub(/#.*/, ""); gsub(/,/, " "); for (i = 1; i <= NF; i++) print $i; }' "$file")
+
+  if [ "$count" -eq 0 ]; then
+    echo "[F] Secret file '$file' does not contain secrets."
+    return 1
+  fi
+
+  SECRET="$parsed"
+  return 0
+}
+
+SECRET_FILE_CMD="--mtproto-secret-file /data/secret"
+if [ ! -z "$SECRET_FILE" ]; then
+  echo "[+] Using secrets from file: '$SECRET_FILE'."
+  load_secrets_from_file "$SECRET_FILE" || exit 1
+elif [ ! -z "$SECRET" ]; then
+  echo "[+] Using the explicitly passed secret list from SECRET."
+  if ! echo "$SECRET" | grep -qE '^[0-9a-fA-F]{32}(,[0-9a-fA-F]{32}){0,127}$'; then
+    echo '[F] Bad secret format: should be 32 hex chars (for 16 bytes) for every secret; secrets should be comma-separated.'
+    exit 1
+  fi
+  SECRET="$(echo "$SECRET" | tr '[:upper:]' '[:lower:]')"
 elif [ -f /data/secret ]; then
-  SECRET="$(cat /data/secret)"
-  echo "[+] Using the secret in /data/secret: '$SECRET'."
+  echo "[+] Using secrets from /data/secret."
+  load_secrets_from_file /data/secret || exit 1
 else
   if [[ ! -z "$SECRET_COUNT" ]]; then
-    if [[ ! ( "$SECRET_COUNT" -ge 1 &&  "$SECRET_COUNT" -le 128 ) ]]; then
-      echo "[F] Can generate between 1 and 128 secrets."
+    if [[ ! ( "$SECRET_COUNT" -ge 1 &&  "$SECRET_COUNT" -le "$MAX_SECRETS" ) ]]; then
+      echo "[F] Can generate between 1 and $MAX_SECRETS secrets."
       exit 5
     fi
   else
@@ -35,10 +84,8 @@ else
 fi
 
 if echo "$SECRET" | grep -qE '^[0-9a-fA-F]{32}(,[0-9a-fA-F]{32}){0,127}$'; then
-  SECRET="$(echo "$SECRET" | tr '[:upper:]' '[:lower:]')"
-  SECRET_CMD="-S $(echo "$SECRET" | sed 's/,/ -S /g')"
-  echo -- "$SECRET_CMD" > /data/secret_cmd
   echo "$SECRET" > /data/secret
+  echo -- "$SECRET_FILE_CMD" > /data/secret_cmd
 else
   echo '[F] Bad secret format: should be 32 hex chars (for 16 bytes) for every secret; secrets should be comma-separated.'
   exit 1
@@ -80,7 +127,7 @@ fi
 
 echo "[*] Final configuration:"
 I=1
-echo "$SECRET" | tr ',' '\n' | while read S; do
+echo "$SECRET" | tr ',' '\n' | while IFS= read -r S; do
   echo "[*]   Secret $I: $S"
   echo "[*]   tg:// link for secret $I auto configuration: tg://proxy?server=${IP}&port=443&secret=${S}"
   echo "[*]   t.me link for secret $I: https://t.me/proxy?server=${IP}&port=443&secret=${S}"
@@ -93,4 +140,4 @@ echo "[*]   Make sure to fix the links in case you run the proxy on a different 
 echo
 echo '[+] Starting proxy...'
 sleep 1
-exec /usr/local/bin/mtproto-proxy -p 2398 --http-stats -H 443 -M "$WORKERS" -C 60000 --aes-pwd /etc/telegram/hello-explorers-how-are-you-doing -u root $CONFIG --allow-skip-dh --nat-info "$INTERNAL_IP:$IP" $SECRET_CMD $TAG_CMD
+exec /usr/local/bin/mtproto-proxy -p 2398 --http-stats -H 443 -M "$WORKERS" -C 60000 --aes-pwd /etc/telegram/hello-explorers-how-are-you-doing -u root $CONFIG --allow-skip-dh --nat-info "$INTERNAL_IP:$IP" $SECRET_FILE_CMD $TAG_CMD

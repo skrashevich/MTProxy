@@ -2352,6 +2352,103 @@ void mtfront_sigusr1_handler (void) {
   }
 }
 
+static int decode_hex_secret (const char *opt_name, const char *value, unsigned char secret[16]) {
+  if (strlen (value) != 32) {
+    kprintf ("%s option requires exactly 32 hex digits\n", opt_name);
+    return -1;
+  }
+
+  int i;
+  unsigned char b = 0;
+  for (i = 0; i < 32; i++) {
+    if (value[i] >= '0' && value[i] <= '9') {
+      b = b * 16 + value[i] - '0';
+    } else if (value[i] >= 'a' && value[i] <= 'f') {
+      b = b * 16 + value[i] - 'a' + 10;
+    } else if (value[i] >= 'A' && value[i] <= 'F') {
+      b = b * 16 + value[i] - 'A' + 10;
+    } else {
+      kprintf ("%s option requires exactly 32 hex digits. '%c' is not hexdigit\n", opt_name, value[i]);
+      return -1;
+    }
+    if (i & 1) {
+      secret[i / 2] = b;
+      b = 0;
+    }
+  }
+
+  return 0;
+}
+
+static int add_mtproto_secret (const char *value, const char *source, int line_no) {
+  unsigned char secret[16];
+  if (decode_hex_secret ("--mtproto-secret", value, secret) < 0) {
+    if (source) {
+      kprintf ("failed to parse mtproto secret from '%s' at line %d\n", source, line_no);
+    }
+    return -1;
+  }
+
+  if (secret_count >= MAX_MTFRONT_SECRETS) {
+    kprintf ("too many mtproto secrets: %d (max %d)\n", secret_count + 1, MAX_MTFRONT_SECRETS);
+    return -1;
+  }
+
+  tcp_rpcs_set_ext_secret (secret);
+  secret_count++;
+  return 0;
+}
+
+static int load_mtproto_secrets_from_file (const char *filename) {
+  FILE *f = fopen (filename, "r");
+  if (!f) {
+    kprintf ("cannot open mtproto secret file '%s': %m\n", filename);
+    return -1;
+  }
+
+  char *line = NULL;
+  size_t line_size = 0;
+  int line_no = 0;
+  int secrets_loaded = 0;
+
+  while (getline (&line, &line_size, f) > 0) {
+    line_no++;
+    char *comment = strchr (line, '#');
+    if (comment) {
+      *comment = 0;
+    }
+
+    char *saveptr = NULL;
+    char *token = strtok_r (line, ", \t\r\n", &saveptr);
+    while (token) {
+      if (add_mtproto_secret (token, filename, line_no) < 0) {
+        free (line);
+        fclose (f);
+        return -1;
+      }
+      secrets_loaded++;
+      token = strtok_r (NULL, ", \t\r\n", &saveptr);
+    }
+  }
+
+  free (line);
+
+  if (ferror (f)) {
+    kprintf ("failed to read mtproto secret file '%s': %m\n", filename);
+    fclose (f);
+    return -1;
+  }
+
+  fclose (f);
+
+  if (!secrets_loaded) {
+    kprintf ("mtproto secret file '%s' does not contain secrets\n", filename);
+    return -1;
+  }
+
+  return 0;
+}
+
 /*
  *
  *		MAIN
@@ -2427,40 +2524,23 @@ int f_parse_option (int val) {
     domain_count++;
     break;
   case 'S':
+    if (add_mtproto_secret (optarg, NULL, 0) < 0) {
+      usage ();
+    }
+    break;
   case 'P':
     {
-      if (strlen (optarg) != 32) {
-        kprintf ("'%c' option requires exactly 32 hex digits\n", val);
+      unsigned char secret[16];
+      if (decode_hex_secret ("--proxy-tag", optarg, secret) < 0) {
         usage ();
       }
-
-      unsigned char secret[16];
-      int i;
-      unsigned char b = 0;
-      for (i = 0; i < 32; i++) {
-        if (optarg[i] >= '0' && optarg[i] <= '9')  {
-          b = b * 16 + optarg[i] - '0';
-        } else if (optarg[i] >= 'a' && optarg[i] <= 'f') {
-          b = b * 16 + optarg[i] - 'a' + 10;
-        } else if (optarg[i] >= 'A' && optarg[i] <= 'F') {
-          b = b * 16 + optarg[i] - 'A' + 10;
-        } else {
-          kprintf ("'S' option requires exactly 32 hex digits. '%c' is not hexdigit\n", optarg[i]);
-          usage ();
-        }
-        if (i & 1) {
-          secret[i / 2] = b;
-          b = 0;
-        }
-      }
-      if (val == 'S') {
-	assert (secret_count < MAX_MTFRONT_SECRETS);
-	tcp_rpcs_set_ext_secret (secret);
-	secret_count++;
-      } else {
-	memcpy (proxy_tag, secret, sizeof (proxy_tag));
-	proxy_tag_set = 1;
-      }
+      memcpy (proxy_tag, secret, sizeof (proxy_tag));
+      proxy_tag_set = 1;
+    }
+    break;
+  case 2001:
+    if (load_mtproto_secrets_from_file (optarg) < 0) {
+      usage ();
     }
     break;
   default:
@@ -2472,6 +2552,7 @@ int f_parse_option (int val) {
 void mtfront_prepare_parse_options (void) {
   parse_option ("http-stats", no_argument, 0, 2000, "allow http server to answer on stats queries");
   parse_option ("mtproto-secret", required_argument, 0, 'S', "16-byte secret in hex mode");
+  parse_option ("mtproto-secret-file", required_argument, 0, 2001, "path to file with mtproto secrets (comma or whitespace-separated)");
   parse_option ("proxy-tag", required_argument, 0, 'P', "16-byte proxy tag in hex mode to be passed along with all forwarded queries");
   parse_option ("domain", required_argument, 0, 'D', "adds allowed domain for TLS-transport mode, disables other transports; can be specified more than once");
   parse_option ("max-special-connections", required_argument, 0, 'C', "sets maximal number of accepted client connections per worker");

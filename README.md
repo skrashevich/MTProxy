@@ -58,6 +58,7 @@ head -c 16 /dev/urandom | xxd -ps
 - `443` is the port, used by clients to connect to the proxy.
 - `8888` is the local port. You can use it to get statistics from `mtproto-proxy`. Like `wget localhost:8888/stats`. You can only get this stat via loopback.
 - `<secret>` is the secret generated at step 3. Also you can set multiple secrets: `-S <secret1> -S <secret2>`.
+  For a large list of secrets, use `--mtproto-secret-file /path/to/secrets.txt` (secrets can be comma- or whitespace-separated, `#` starts a comment line fragment).
 - `proxy-secret` and `proxy-multi.conf` are obtained at steps 1 and 2.
 - `1` is the number of workers. You can increase the number of workers, if you have a powerful server.
 
@@ -115,3 +116,4 @@ systemctl enable MTProxy.service
 ## Docker image
 Telegram is also providing [official Docker image](https://hub.docker.com/r/telegrammessenger/proxy/).
 Note: the image is outdated.
+The bundled `docker/run.sh` supports `SECRET_FILE=/path/to/secrets.txt` and passes secrets via `--mtproto-secret-file` to avoid long command lines.
