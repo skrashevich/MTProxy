@@ -147,7 +147,7 @@ int tcp_proxy_pass_write_packet (connection_job_t C, struct raw_message *raw) {
 
 int tcp_rpcs_default_execute (connection_job_t c, int op, struct raw_message *msg);
 
-static unsigned char ext_secret[16][16];
+static unsigned char ext_secret[MAX_MTFRONT_SECRETS][16];
 static int ext_secret_cnt = 0;
 
 void mtfront_on_secret_connection_open (int secret_id) __attribute__ ((weak));
@@ -161,7 +161,7 @@ void mtfront_on_secret_connection_close (int secret_id) {
 }
 
 void tcp_rpcs_set_ext_secret (unsigned char secret[16]) {
-  assert (ext_secret_cnt < 16);
+  assert (ext_secret_cnt < MAX_MTFRONT_SECRETS);
   memcpy (ext_secret[ext_secret_cnt ++], secret, 16);
 }
 

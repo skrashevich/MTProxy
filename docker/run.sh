@@ -19,8 +19,8 @@ elif [ -f /data/secret ]; then
   echo "[+] Using the secret in /data/secret: '$SECRET'."
 else
   if [[ ! -z "$SECRET_COUNT" ]]; then
-    if [[ ! ( "$SECRET_COUNT" -ge 1 &&  "$SECRET_COUNT" -le 16 ) ]]; then
-      echo "[F] Can generate between 1 and 16 secrets."
+    if [[ ! ( "$SECRET_COUNT" -ge 1 &&  "$SECRET_COUNT" -le 128 ) ]]; then
+      echo "[F] Can generate between 1 and 128 secrets."
       exit 5
     fi
   else
@@ -34,7 +34,7 @@ else
   done
 fi
 
-if echo "$SECRET" | grep -qE '^[0-9a-fA-F]{32}(,[0-9a-fA-F]{32}){,15}$'; then
+if echo "$SECRET" | grep -qE '^[0-9a-fA-F]{32}(,[0-9a-fA-F]{32}){0,127}$'; then
   SECRET="$(echo "$SECRET" | tr '[:upper:]' '[:lower:]')"
   SECRET_CMD="-S $(echo "$SECRET" | sed 's/,/ -S /g')"
   echo -- "$SECRET_CMD" > /data/secret_cmd

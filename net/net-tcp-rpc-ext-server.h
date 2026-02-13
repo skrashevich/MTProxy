@@ -25,6 +25,8 @@
 #include "net/net-tcp-rpc-server.h"
 #include "net/net-connections.h"
 
+#define MAX_MTFRONT_SECRETS 128
+
 extern conn_type_t ct_tcp_rpc_ext_server;
 
 int tcp_rpcs_compact_parse_execute (connection_job_t c);

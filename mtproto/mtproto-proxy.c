@@ -96,8 +96,6 @@ const char FullVersionStr[] = VERSION_STR " compiled at " __DATE__ " " __TIME__ 
 #define CONNECT_TIMEOUT 3
 
 #define	MAX_POST_SIZE	(262144 * 4 - 4096)
-#define MAX_MTFRONT_SECRETS 16
-
 #define	DEFAULT_WINDOW_CLAMP	131072
 
 // #define DEFAULT_OUTBOUND_CONNECTION_CREATION_RATE	1000000
