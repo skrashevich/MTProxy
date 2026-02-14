@@ -51,12 +51,14 @@ DEPDIRS := ${DEP} $(addprefix ${DEP}/,${PROJECTS})
 ALLDIRS := ${DEPDIRS} ${OBJDIRS}
 
 
-.PHONY:	all clean go-build go-test go-smoke go-stability go-dualrun go-dualrun-report go-linux-docker-check
+.PHONY:	all clean go-build go-test go-smoke go-stability go-dualrun go-dualrun-report go-phase8-drill go-linux-docker-check
 
 DOCKER_GO_IMAGE ?= golang:bookworm
 DOCKER_PLATFORM ?=
 DUALRUN_TEST_PATTERN ?= TestDualRunControlPlaneSLO|TestDualRunDataplaneCanarySLO|TestDualRunDataplaneLoadSLO
 DUALRUN_REPORT_PATH ?= $(CURDIR)/artifacts/dualrun/phase7-dualrun-report.json
+PHASE8_TEST_PATTERN ?= TestPhase8CutoverRollbackDrill
+PHASE8_REPORT_PATH ?= $(CURDIR)/artifacts/phase8/phase8-cutover-report.json
 
 EXELIST	:= ${EXE}/mtproto-proxy
 
@@ -185,5 +187,9 @@ go-dualrun-report:
 	mkdir -p artifacts/dualrun
 	MTPROXY_DUAL_RUN=1 MTPROXY_DUAL_RUN_REPORT=$(DUALRUN_REPORT_PATH) go test -v ./integration/cli -run '$(DUALRUN_TEST_PATTERN)' -count=1 | tee artifacts/dualrun/go-dualrun.log
 
+go-phase8-drill:
+	mkdir -p artifacts/phase8
+	MTPROXY_PHASE8=1 MTPROXY_PHASE8_REPORT=$(PHASE8_REPORT_PATH) go test -v ./integration/cli -run '$(PHASE8_TEST_PATTERN)' -count=1 | tee artifacts/phase8/go-phase8.log
+
 go-linux-docker-check:
-	docker run --rm $(if $(DOCKER_PLATFORM),--platform $(DOCKER_PLATFORM),) -v "$$PWD":/work -w /work $(DOCKER_GO_IMAGE) bash -lc 'set -euo pipefail; export PATH=/usr/local/go/bin:$$PATH; apt-get update >/dev/null; apt-get install -y build-essential libssl-dev zlib1g-dev >/dev/null; make go-stability; make go-dualrun'
+	docker run --rm $(if $(DOCKER_PLATFORM),--platform $(DOCKER_PLATFORM),) -v "$$PWD":/work -w /work $(DOCKER_GO_IMAGE) bash -lc 'set -euo pipefail; export PATH=/usr/local/go/bin:$$PATH; apt-get update >/dev/null; apt-get install -y build-essential libssl-dev zlib1g-dev >/dev/null; make go-stability; make go-dualrun; make go-phase8-drill'

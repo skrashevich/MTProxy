@@ -151,8 +151,13 @@ This file tracks cross-agent integration status for the C -> Go migration.
   - added `make go-dualrun-report` target to produce machine-readable report (`MTPROXY_DUAL_RUN_REPORT`, JSON) and verbose test log artifact under `/Users/svk/Documents/Projects.nosync/MTProxy/artifacts/dualrun`.
   - added Phase 7 baseline artifact `/Users/svk/Documents/Projects.nosync/MTProxy/docs/go-phase7-dualrun-baseline.md` with reproducible command and measured canary metrics.
   - added formal Phase 7 acceptance artifact `/Users/svk/Documents/Projects.nosync/MTProxy/docs/go-phase7-acceptance-report.md`; Gate 3 (`dual-run not worse than C on agreed SLO`) is marked `PASS` for branch `golang`.
+- Implemented Phase 8 cutover/rollback validation:
+  - added runbook `/Users/svk/Documents/Projects.nosync/MTProxy/docs/go-phase8-cutover-runbook.md`,
+  - added automated drill test `/Users/svk/Documents/Projects.nosync/MTProxy/integration/cli/phase8_cutover_integration_test.go` (`TestPhase8CutoverRollbackDrill`) executing `C -> Go -> C` switchover on one runtime profile with startup/shutdown envelope guards,
+  - added make target `go-phase8-drill` producing artifacts under `/Users/svk/Documents/Projects.nosync/MTProxy/artifacts/phase8`,
+  - added formal Phase 8 acceptance artifact `/Users/svk/Documents/Projects.nosync/MTProxy/docs/go-phase8-acceptance-report.md`; Gate 5 (`cutover and rollback procedures are validated`) is marked `PASS` in drill scope.
 - Added Docker-based Linux validation target:
-  - `make go-linux-docker-check` runs `go-stability` and `go-dualrun` in a Linux container (`DOCKER_GO_IMAGE`, default `golang:bookworm`; optional `DOCKER_PLATFORM=linux/amd64` for full dual-run on ARM hosts).
+  - `make go-linux-docker-check` runs `go-stability`, `go-dualrun`, and `go-phase8-drill` in a Linux container (`DOCKER_GO_IMAGE`, default `golang:bookworm`; optional `DOCKER_PLATFORM=linux/amd64` for full dual-run on ARM hosts).
 
 ## Integration Notes
 - The existing C build and Docker workflows are untouched.
@@ -193,7 +198,7 @@ This file tracks cross-agent integration status for the C -> Go migration.
 - Integration suite now includes burst traffic replay for ingress/outbound with stats-based stability assertions.
 - Integration suite now includes soak/load guard checks for FD and RSS growth deltas in a real runtime process.
 - CI now includes runtime-loop smoke: waits for runtime init, sends `SIGUSR1` (log reopen), then `SIGTERM`, and asserts clean exit.
-- Go CI workflow (`/Users/svk/Documents/Projects.nosync/MTProxy/.github/workflows/go-build-and-smoke.yml`) now runs `make go-smoke`, `make go-stability`, and Linux-only `make go-dualrun-report` with uploaded dual-run artifacts (`artifacts/dualrun`).
+- Go CI workflow (`/Users/svk/Documents/Projects.nosync/MTProxy/.github/workflows/go-build-and-smoke.yml`) now runs `make go-smoke`, `make go-stability`, Linux-only `make go-dualrun-report`, and Linux-only `make go-phase8-drill` with uploaded artifacts (`artifacts/dualrun`, `artifacts/phase8`).
 - CI/make smoke now also validates supervisor smoke path (`-M 2`) with graceful `SIGTERM`.
 - CI/make supervisor smoke now also sends `SIGUSR1` and verifies parent log reopen marker.
 - `go test ./...` passes with Phase 5 dataplane/ingress/outbound/runtime tests enabled.

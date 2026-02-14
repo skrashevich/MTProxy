@@ -63,6 +63,5 @@ All three tests passed in one run (`ok .../integration/cli 13.311s`).
 Gate 3 status in this repository branch (`golang`): **PASS**.  
 Phase 7 dual-run SLO evidence is present and reproducible via `make go-dualrun-report`.
 
-Open migration work remains in Phase 8:
-- cutover procedure validation,
-- rollback procedure validation.
+Phase 8 cutover/rollback validation is now documented in:
+`/Users/svk/Documents/Projects.nosync/MTProxy/docs/go-phase8-acceptance-report.md`.

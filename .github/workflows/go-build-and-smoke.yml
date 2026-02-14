@@ -52,9 +52,15 @@ jobs:
         if: matrix.os == 'ubuntu-latest'
         run: make go-dualrun-report
 
+      - name: Phase 8 cutover/rollback drill (Linux)
+        if: matrix.os == 'ubuntu-latest'
+        run: make go-phase8-drill
+
       - name: Upload dual-run artifacts
         if: matrix.os == 'ubuntu-latest'
         uses: actions/upload-artifact@v4
         with:
-          name: dualrun-phase7
-          path: artifacts/dualrun
+          name: go-migration-artifacts
+          path: |
+            artifacts/dualrun
+            artifacts/phase8
