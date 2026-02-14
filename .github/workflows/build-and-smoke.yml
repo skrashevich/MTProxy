@@ -6,6 +6,7 @@ on:
     branches:
       - main
       - master
+      - golang
   workflow_dispatch:
 
 jobs:

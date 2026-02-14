@@ -9,7 +9,7 @@ Goal: `pure Go`, full behavioral parity with the current C version, and staged `
 2. Current version: `v1` (this specification).
 3. Any plan change is made only as a separate commit with prefix `plan:` and a changelog block at the end of the file.
 4. Additional coordination file: `/Users/svk/Documents/Projects.nosync/MTProxy/docs/go-migration-coordination.md`.
-5. Shared execution branch: `cdx/go-migration-mainline`.
+5. Shared execution branch: `golang`.
 
 ## Public API / Interface Commitments
 1. External contract remains 1:1:
@@ -67,7 +67,7 @@ Production switch, rollback window, deprecate C pipeline.
 1. Every commit must include agent tag:
 `[agent:codex]`, `[agent:claude]`, `[agent:glm]`.
 2. Commits are allowed only in owned paths; violations block integration.
-3. Rebase is required before push to `cdx/go-migration-mainline`.
+3. Rebase is required before push to `golang`.
 4. Integrator runs daily conflict scan and parity status report in
 `/Users/svk/Documents/Projects.nosync/MTProxy/docs/go-migration-coordination.md`.
 5. Any cross-cutting change is done only as an integrator "integration patch".
@@ -103,4 +103,3 @@ Linux build/test/smoke, macOS build/smoke, Docker multi-arch build.
 3. Rollout only via `dual-run`.
 4. Single shared branch is an explicit organizational choice.
 5. Conflict management uses strict path ownership only.
-

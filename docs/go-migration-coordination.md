@@ -4,6 +4,7 @@
 This file tracks cross-agent integration status for the C -> Go migration.
 
 ## Current Status
+- Migration execution branch switched to `golang` (all in-progress Go implementation is tracked there until merge-back into `master`).
 - Phase 1 bootstrap started.
 - Added `go.mod`.
 - Added Go binary entrypoint at `/Users/svk/Documents/Projects.nosync/MTProxy/cmd/mtproto-proxy`.
