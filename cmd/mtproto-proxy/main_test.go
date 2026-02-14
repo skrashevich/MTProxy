@@ -151,3 +151,163 @@ func TestShouldStartStatsServerSupervisedWorkerInvalidID(t *testing.T) {
 		t.Fatalf("unexpected skip reason: %q", reason)
 	}
 }
+
+func TestShouldStartDataPlaneIngress(t *testing.T) {
+	t.Setenv("MTPROXY_GO_ENABLE_INGRESS", "1")
+	ok, reason := shouldStartDataPlaneIngress(false)
+	if !ok || reason != "" {
+		t.Fatalf("expected ingress enabled")
+	}
+	t.Setenv("MTPROXY_GO_ENABLE_INGRESS", "0")
+	ok, _ = shouldStartDataPlaneIngress(false)
+	if ok {
+		t.Fatalf("expected ingress disabled")
+	}
+}
+
+func TestShouldStartDataPlaneIngressSupervisorWorker0(t *testing.T) {
+	t.Setenv("MTPROXY_GO_ENABLE_INGRESS", "1")
+	t.Setenv("MTPROXY_GO_WORKER_ID", "0")
+	ok, reason := shouldStartDataPlaneIngress(true)
+	if !ok || reason != "" {
+		t.Fatalf("expected ingress enabled for worker0, got ok=%v reason=%q", ok, reason)
+	}
+}
+
+func TestShouldStartDataPlaneIngressSupervisorNonZero(t *testing.T) {
+	t.Setenv("MTPROXY_GO_ENABLE_INGRESS", "1")
+	t.Setenv("MTPROXY_GO_WORKER_ID", "1")
+	ok, reason := shouldStartDataPlaneIngress(true)
+	if ok {
+		t.Fatalf("expected ingress disabled for non-zero worker")
+	}
+	if !strings.Contains(reason, "only worker 0 serves ingress") {
+		t.Fatalf("unexpected skip reason: %q", reason)
+	}
+}
+
+func TestResolveIngressAddrFromEnv(t *testing.T) {
+	t.Setenv("MTPROXY_GO_INGRESS_ADDR", "127.0.0.1:12345")
+	addr, err := resolveIngressAddr(cli.Options{})
+	if err != nil {
+		t.Fatalf("resolve ingress addr: %v", err)
+	}
+	if addr != "127.0.0.1:12345" {
+		t.Fatalf("unexpected ingress addr: %q", addr)
+	}
+}
+
+func TestResolveIngressAddrFromOptions(t *testing.T) {
+	addr, err := resolveIngressAddr(cli.Options{LocalPort: 443, BindAddress: "127.0.0.1"})
+	if err != nil {
+		t.Fatalf("resolve ingress addr: %v", err)
+	}
+	if addr != "127.0.0.1:443" {
+		t.Fatalf("unexpected ingress addr: %q", addr)
+	}
+}
+
+func TestResolveIngressAddrMissingPort(t *testing.T) {
+	_, err := resolveIngressAddr(cli.Options{LocalPortRaw: "10000:10010"})
+	if err == nil {
+		t.Fatalf("expected ingress resolve error without single port")
+	}
+}
+
+func TestShouldStartOutboundTransport(t *testing.T) {
+	t.Setenv("MTPROXY_GO_ENABLE_OUTBOUND", "1")
+	ok, reason := shouldStartOutboundTransport(false)
+	if !ok || reason != "" {
+		t.Fatalf("expected outbound enabled")
+	}
+	t.Setenv("MTPROXY_GO_ENABLE_OUTBOUND", "0")
+	ok, _ = shouldStartOutboundTransport(false)
+	if ok {
+		t.Fatalf("expected outbound disabled")
+	}
+}
+
+func TestShouldStartOutboundTransportSupervisorWorker0(t *testing.T) {
+	t.Setenv("MTPROXY_GO_ENABLE_OUTBOUND", "1")
+	t.Setenv("MTPROXY_GO_WORKER_ID", "0")
+	ok, reason := shouldStartOutboundTransport(true)
+	if !ok || reason != "" {
+		t.Fatalf("expected outbound enabled for worker0, got ok=%v reason=%q", ok, reason)
+	}
+}
+
+func TestShouldStartOutboundTransportSupervisorNonZero(t *testing.T) {
+	t.Setenv("MTPROXY_GO_ENABLE_OUTBOUND", "1")
+	t.Setenv("MTPROXY_GO_WORKER_ID", "1")
+	ok, reason := shouldStartOutboundTransport(true)
+	if ok {
+		t.Fatalf("expected outbound disabled for non-zero worker")
+	}
+	if !strings.Contains(reason, "only worker 0 enables outbound transport") {
+		t.Fatalf("unexpected skip reason: %q", reason)
+	}
+}
+
+func TestOutboundConfigFromEnvDefaults(t *testing.T) {
+	cfg, err := outboundConfigFromEnv()
+	if err != nil {
+		t.Fatalf("outbound config defaults: %v", err)
+	}
+	if cfg.ConnectTimeout != 3*time.Second {
+		t.Fatalf("unexpected default connect timeout: %s", cfg.ConnectTimeout)
+	}
+	if cfg.WriteTimeout != 5*time.Second {
+		t.Fatalf("unexpected default write timeout: %s", cfg.WriteTimeout)
+	}
+	if cfg.ReadTimeout != 250*time.Millisecond {
+		t.Fatalf("unexpected default read timeout: %s", cfg.ReadTimeout)
+	}
+	if cfg.IdleConnTimeout != 90*time.Second {
+		t.Fatalf("unexpected default idle timeout: %s", cfg.IdleConnTimeout)
+	}
+	if cfg.MaxFrameSize != 8<<20 {
+		t.Fatalf("unexpected default max frame size: %d", cfg.MaxFrameSize)
+	}
+}
+
+func TestOutboundConfigFromEnvCustomValues(t *testing.T) {
+	t.Setenv("MTPROXY_GO_OUTBOUND_CONNECT_TIMEOUT_MS", "1200")
+	t.Setenv("MTPROXY_GO_OUTBOUND_WRITE_TIMEOUT_MS", "2300")
+	t.Setenv("MTPROXY_GO_OUTBOUND_READ_TIMEOUT_MS", "345")
+	t.Setenv("MTPROXY_GO_OUTBOUND_IDLE_TIMEOUT_MS", "4567")
+	t.Setenv("MTPROXY_GO_OUTBOUND_MAX_FRAME_SIZE", "123456")
+
+	cfg, err := outboundConfigFromEnv()
+	if err != nil {
+		t.Fatalf("outbound config custom: %v", err)
+	}
+	if cfg.ConnectTimeout != 1200*time.Millisecond {
+		t.Fatalf("unexpected connect timeout: %s", cfg.ConnectTimeout)
+	}
+	if cfg.WriteTimeout != 2300*time.Millisecond {
+		t.Fatalf("unexpected write timeout: %s", cfg.WriteTimeout)
+	}
+	if cfg.ReadTimeout != 345*time.Millisecond {
+		t.Fatalf("unexpected read timeout: %s", cfg.ReadTimeout)
+	}
+	if cfg.IdleConnTimeout != 4567*time.Millisecond {
+		t.Fatalf("unexpected idle timeout: %s", cfg.IdleConnTimeout)
+	}
+	if cfg.MaxFrameSize != 123456 {
+		t.Fatalf("unexpected max frame size: %d", cfg.MaxFrameSize)
+	}
+}
+
+func TestOutboundConfigFromEnvInvalidValue(t *testing.T) {
+	t.Setenv("MTPROXY_GO_OUTBOUND_IDLE_TIMEOUT_MS", "bad")
+	if _, err := outboundConfigFromEnv(); err == nil {
+		t.Fatalf("expected outbound config parse error")
+	}
+}
+
+func TestOutboundConfigFromEnvInvalidMaxFrameSize(t *testing.T) {
+	t.Setenv("MTPROXY_GO_OUTBOUND_MAX_FRAME_SIZE", "0")
+	if _, err := outboundConfigFromEnv(); err == nil {
+		t.Fatalf("expected outbound max frame size parse error")
+	}
+}

@@ -43,6 +43,7 @@ Build and test Go code:
 ```bash
 make go-test
 make go-build
+make go-stability
 ```
 
 Run Go bootstrap config check:
@@ -50,22 +51,25 @@ Run Go bootstrap config check:
 ./objs/bin/mtproto-proxy-go ./docker/telegram/backend.conf
 ```
 
-Run Go bootstrap signal loop (reload/shutdown scaffold):
+Run Go runtime loop:
 ```bash
-MTPROXY_GO_SIGNAL_LOOP=1 ./objs/bin/mtproto-proxy-go ./docker/telegram/backend.conf
+./objs/bin/mtproto-proxy-go ./docker/telegram/backend.conf
 ```
 
 Run Go loop with reopenable log file (send `SIGUSR1` to reopen, `SIGHUP` to reload config):
 ```bash
-MTPROXY_GO_SIGNAL_LOOP=1 ./objs/bin/mtproto-proxy-go -l ./mtproxy-go.log ./docker/telegram/backend.conf
+./objs/bin/mtproto-proxy-go -l ./mtproxy-go.log ./docker/telegram/backend.conf
 ```
 
 Run Go loop with supervisor mode (`-M` workers, signal forwarding scaffold):
 ```bash
-MTPROXY_GO_SIGNAL_LOOP=1 ./objs/bin/mtproto-proxy-go -M 2 -l ./mtproxy-go.log ./docker/telegram/backend.conf
+./objs/bin/mtproto-proxy-go -M 2 -l ./mtproxy-go.log ./docker/telegram/backend.conf
 ```
 
 In supervisor mode with `--http-stats`, only `worker 0` binds the stats endpoint to avoid port conflicts.
+The same single-worker binding policy is used for `MTPROXY_GO_ENABLE_INGRESS=1` and `MTPROXY_GO_ENABLE_OUTBOUND=1`.
+Outbound transport tuning envs: `MTPROXY_GO_OUTBOUND_CONNECT_TIMEOUT_MS`, `MTPROXY_GO_OUTBOUND_WRITE_TIMEOUT_MS`,
+`MTPROXY_GO_OUTBOUND_READ_TIMEOUT_MS`, `MTPROXY_GO_OUTBOUND_IDLE_TIMEOUT_MS`, `MTPROXY_GO_OUTBOUND_MAX_FRAME_SIZE`.
 
 ## Running
 1. Obtain a secret, used to connect to telegram servers.

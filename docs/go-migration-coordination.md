@@ -1,0 +1,185 @@
+# Go Migration Coordination
+
+## Scope
+This file tracks cross-agent integration status for the C -> Go migration.
+
+## Current Status
+- Phase 1 bootstrap started.
+- Added `go.mod`.
+- Added Go binary entrypoint at `/Users/svk/Documents/Projects.nosync/MTProxy/cmd/mtproto-proxy`.
+- Added initial CLI usage output helper and option parser at `/Users/svk/Documents/Projects.nosync/MTProxy/internal/cli`.
+- Added Go CI workflow: `/Users/svk/Documents/Projects.nosync/MTProxy/.github/workflows/go-build-and-smoke.yml`.
+- Added Go-oriented make targets in `/Users/svk/Documents/Projects.nosync/MTProxy/Makefile`: `go-test`, `go-build`, `go-smoke`.
+- Documented Go bootstrap usage in `/Users/svk/Documents/Projects.nosync/MTProxy/README.md`.
+- Expanded parser toward C parity: interspersed args, secret file loading, and key net/mtproto flags used by Docker startup.
+- Added C-parity short option alias `-D` for TLS domain allowlist (`--domain`), including inline form `-Dexample.com`.
+- Added docker parity CLI tests that execute the same argument shape as `/Users/svk/Documents/Projects.nosync/MTProxy/docker/run.sh` (with `--mtproto-secret-file`, `--nat-info`, `--http-stats`, and optional `-P` tag).
+- Expanded Go `--help`/usage output coverage for control-plane flags (`-C/-W/-H/-M/-T`, `-l`, `-u`, `-p`, `-v`) with matching long aliases.
+- Tightened long-option parser for no-arg flags (`--help`, `--ipv6`, `--http-stats`, `--allow-skip-dh`, `--disable-tcp`, `--crc32c`, `--force-dh`): `--flag=value` now returns an explicit parse error.
+- Added CLI tests for base engine options in short/long forms (`-b/-c/-d/-u/-l` and `--backlog/--connections/--daemonize/--user/--log`).
+- Added memory-limit parser parity for `--msg-buffers-size` with suffixes (`k/m/g/t`, case-insensitive), including validation and tests for invalid formats.
+- Expanded mtproto secret-file parser tests:
+  - complex formatting with comments/commas/whitespace and mixed-case hex tokens,
+  - explicit rejection of empty secret files (comments-only).
+- Added integration CLI suite at `/Users/svk/Documents/Projects.nosync/MTProxy/integration/cli/main_integration_test.go`:
+  - verifies real-process behavior for `--help` and default runtime startup/shutdown,
+  - verifies signal loop reload/reopen/shutdown path (`SIGHUP`, `SIGUSR1`, `SIGTERM`),
+  - verifies reload failure safety: invalid `SIGHUP` config keeps process alive until `SIGTERM`.
+  - verifies `SIGUSR1` no-op behavior without `-l/--log` (no reopen error state).
+  - verifies supervisor mode lifecycle (`-M 2`) with graceful parent-driven shutdown.
+  - verifies supervisor signal forwarding for `SIGHUP` reload and `SIGUSR1` log reopen.
+  - verifies supervisor reaction to worker crash (`SIGKILL`): logs unexpected exit and parent returns non-zero.
+  - verifies per-worker signal visibility via `[worker 0]` and `[worker 1]` log prefixes on reload/reopen paths.
+  - verifies supervised worker exits when expected supervisor PID changes (parent mismatch safety).
+  - verifies supervised worker startup fails fast on invalid `MTPROXY_GO_SUPERVISOR_PID`.
+  - verifies supervisor mode `--http-stats` binding policy: only `worker 0` starts stats listener and endpoint is reachable.
+- Added integration docker suite at `/Users/svk/Documents/Projects.nosync/MTProxy/integration/docker/run_args_test.go`:
+  - verifies docker-style argument set from `/Users/svk/Documents/Projects.nosync/MTProxy/docker/run.sh` against the Go runtime binary,
+  - verifies invalid `--mtproto-secret-file` is rejected with parse error path and exit code `2`.
+  - verifies docker-style loop-mode supervisor lifecycle with `-M`, `--http-stats`, and secret-file path in one real-process scenario.
+- Added initial `/internal/config` parser for `default`, `proxy`, `proxy_for`, `timeout`, `min_connections`, `max_connections` with C-like validation.
+- Tightened parser parity: required trailing `;`, limits `MAX_CFG_TARGETS=4096` and `MAX_CFG_CLUSTERS=1024`, and strict intermix checks.
+- Config parser now supports IPv6 target host:port forms (`[ipv6]:port` and loose `ipv6:port` with last-colon port split).
+- Extended config model: each target now carries parsed `min/max_connections` in directive order, plus cluster/default-cluster lookup helpers.
+- Added explicit config tests for `target id` 16-bit signed bounds (`-32768..32767`) and out-of-range rejection parity.
+- Added config state manager `/internal/config/manager.go` with check/reload/current snapshot metadata (`bytes`, `md5`, `loaded_at`).
+- Config manager now clears `LastError` after successful recovery reload (no stale error state in runtime stats).
+- Added bootstrap validation `/internal/proxy/bootstrap.go` for TLS-transport constraints (`--domain` requires mtproto secret; workers warning in TLS mode).
+- Added unified bootstrap load path `/internal/proxy/load.go` (`reload + bootstrap validation`) to prepare SIGHUP-style runtime reload flow.
+- Added lifecycle scaffold `/internal/proxy/lifecycle.go` with signal action mapping (`SIGHUP` reload, `SIGTERM/SIGINT` shutdown), snapshot retention, and reload failure safety.
+- Added runtime scaffold:
+  - `/internal/proxy/router.go` for per-cluster round-robin target selection with default-cluster fallback.
+  - `/internal/proxy/runtime.go` for signal-driven config reload (`SIGHUP`) and graceful stop (`SIGTERM/SIGINT`) with router updates.
+- Added orchestration wrapper `/internal/engine/runner.go` and switched loop-mode `cmd/mtproto-proxy` execution to this runner.
+- Added C-like target selection path: `Router.ChooseProxyTarget` (attempt-based selection with default-cluster fallback and pluggable health-check hook) and `Runtime.ChooseProxyTarget`.
+- Added health-aware runtime routing: `Runtime.SetHealthChecker(...)` now gates target selection/forwarding decisions (default: all healthy).
+- Added health-state reconcile coverage on config updates: unchanged targets keep explicit health state, new targets default to healthy, removed targets are dropped from health map.
+- Added forwarder skeleton:
+  - `/internal/proxy/forwarder.go` with request->target decision path and counters (`total/success/failed/used-default/forward-bytes/avg-payload/last-error`).
+  - integrated in `Runtime` via `Runtime.Forward(...)` and `Runtime.ForwardStats()`.
+- Added runtime stats snapshot and text renderer:
+  - `/internal/proxy/stats.go` (`Runtime.StatsSnapshot()` + `RenderText()` in `key\\tvalue` format),
+  - includes config metadata, router stats, bootstrap warnings, config-manager reload/check counters, and forward counters.
+  - health counters (`targets_healthy`, `targets_unhealthy`) are covered by unit tests via runtime health mutations.
+- Added HTTP stats skeleton:
+  - `/internal/proxy/http_stats.go` with `/stats` handler and startup/shutdown helpers.
+  - `cmd/mtproto-proxy` starts it in loop mode when `--http-stats` is set and `-p` is a single local port.
+  - if bind/start fails, runtime continues without stats server (warning logged).
+- Added log file lifecycle scaffold in Go loop mode:
+  - `cmd/mtproto-proxy` now supports reopenable `-l/--log` output writer.
+  - `SIGUSR1` now triggers log file reopen callback in runtime (with success/error logging).
+  - added unit tests for reopen/close behavior and main log-writer setup path handling.
+  - when no `-l/--log` file is configured, `SIGUSR1` is handled as explicit no-op (no failure state).
+- Added supervisor scaffold in `/Users/svk/Documents/Projects.nosync/MTProxy/cmd/mtproto-proxy/supervisor.go`:
+  - loop mode now supports `-M <workers>` via parent process spawning worker subprocesses,
+  - `SIGHUP`/`SIGUSR1` are forwarded to workers,
+  - supervisor `SIGUSR1` now reopens parent log file (`-l/--log`) before forwarding to workers,
+  - `SIGTERM`/`SIGINT` trigger coordinated worker shutdown with timeout handling.
+  - supervised workers now prefix runtime logs with `[worker N]` markers for observability and integration assertions.
+  - supervised worker runtime now validates `MTPROXY_GO_SUPERVISOR_PID` and exits when parent PID mismatch is detected.
+  - in supervisor mode with `--http-stats`, only worker `0` starts stats server; other workers explicitly skip stats bind.
+  - in supervisor mode with `MTPROXY_GO_ENABLE_INGRESS=1` and/or `MTPROXY_GO_ENABLE_OUTBOUND=1`, only worker `0` starts ingress/outbound components; non-zero workers explicitly skip startup with reason logs to avoid bind conflicts.
+- `cmd/mtproto-proxy` now runs runtime loop by default (no `MTPROXY_GO_SIGNAL_LOOP` gate).
+- Added Phase 4 crypto package scaffold in `/Users/svk/Documents/Projects.nosync/MTProxy/internal/crypto`:
+  - hash helpers (`MD5`, `SHA1`, `SHA256`, `SHA256HMAC`, plus two-chunk variants),
+  - CRC helpers (`CRC32/CRC32C`) with C-compatible partial checksum semantics,
+  - AES helpers (CBC/CTR) and C-parity `aes_create_keys` derivation (`CreateAESKeys`),
+  - DH helpers with fixed MTProxy prime/gen, public-value validation, and round1/round2/round3 APIs.
+- Added Phase 4 protocol package scaffold in `/Users/svk/Documents/Projects.nosync/MTProxy/internal/protocol`:
+  - MTProto packet framing parser with encrypted-vs-handshake classification per `forward_mtproto_packet` checks,
+  - session state helper (`init` -> `handshake` -> `encrypted`),
+  - control-frame encode/decode for `RPC_PROXY_ANS`, `RPC_SIMPLE_ACK`, `RPC_CLOSE_EXT`,
+  - proxy request encode/decode for `RPC_PROXY_REQ` including optional extra-bytes section.
+- Added Phase 4 vector suites:
+  - `/Users/svk/Documents/Projects.nosync/MTProxy/integration/crypto/crypto_vectors_test.go` for SHA/CRC/AES/DH parity vectors,
+  - `/Users/svk/Documents/Projects.nosync/MTProxy/integration/protocol/protocol_vectors_test.go` for MTProto framing/state/control-frame vectors.
+  - added `/Users/svk/Documents/Projects.nosync/MTProxy/integration/protocol/forward_trace_parity_test.go` trace replay harness that compares `protocol.ParseMTProtoPacket` against C `forward_mtproto_packet` decision rules (`mtproto/mtproto-proxy.c:1917..1940`) across accepted/rejected packet edge cases.
+- Started Phase 5 dataplane runtime path:
+  - added `/Users/svk/Documents/Projects.nosync/MTProxy/internal/proxy/dataplane.go` with MTProto packet ingest, per-connection session tracking, connection limit enforcement (`MaxConn`), idle-pruning hooks, and detailed dataplane counters,
+  - integrated dataplane into runtime via `Runtime.HandleMTProtoPacket(...)`, `Runtime.CloseConnection(...)`, `Runtime.PruneIdleConnections(...)`, and dataplane session-state accessors,
+  - extended runtime stats output with dataplane metrics (`dataplane_packets_*`, `dataplane_active_sessions`, `dataplane_session_limit`, `dataplane_bytes_total`),
+  - added dataplane unit tests in `/Users/svk/Documents/Projects.nosync/MTProxy/internal/proxy/dataplane_test.go`.
+- Extended Phase 5 with real TCP ingress scaffold:
+  - added `/Users/svk/Documents/Projects.nosync/MTProxy/internal/proxy/ingress.go` implementing accept/read loop, length-prefixed frame ingest, idle timeout, frame-size validation, and graceful shutdown,
+  - ingress forwards frames into runtime dataplane (`Runtime.HandleMTProtoPacket`) and exports dedicated ingress counters,
+  - runtime stats now include ingress metrics (`ingress_*`) in `/stats` and text render output,
+  - `cmd/mtproto-proxy` can start ingress in loop mode when `MTPROXY_GO_ENABLE_INGRESS=1` (address via `MTPROXY_GO_INGRESS_ADDR` or derived from `-p/--port`),
+  - added ingress tests in `/Users/svk/Documents/Projects.nosync/MTProxy/internal/proxy/ingress_test.go` and main-helper tests for ingress env/address resolution in `/Users/svk/Documents/Projects.nosync/MTProxy/cmd/mtproto-proxy/main_test.go`.
+  - added integration coverage `/Users/svk/Documents/Projects.nosync/MTProxy/integration/cli/main_integration_test.go` (`TestSignalLoopIngressProcessesFrames`): real TCP ingress frame submission plus `/stats` assertions for `dataplane_*` and `ingress_*` counters.
+- Extended Phase 5 with outbound transport delivery path:
+  - added `/Users/svk/Documents/Projects.nosync/MTProxy/internal/proxy/outbound.go` (`OutboundProxy`) for TCP delivery to chosen target with connect/write timeouts and framed payload transport,
+  - dataplane now invokes outbound send after route decision; outbound failures are accounted in `dataplane_packets_outbound_errors`,
+  - runtime stats now include outbound metrics (`outbound_*`) and expose them via `/stats`,
+  - loop mode can enable outbound path via `MTPROXY_GO_ENABLE_OUTBOUND=1`,
+  - added unit coverage `/Users/svk/Documents/Projects.nosync/MTProxy/internal/proxy/outbound_test.go` and outbound error handling coverage in `/Users/svk/Documents/Projects.nosync/MTProxy/internal/proxy/dataplane_test.go`,
+  - added end-to-end integration coverage in `/Users/svk/Documents/Projects.nosync/MTProxy/integration/cli/main_integration_test.go` (`TestSignalLoopIngressOutboundDeliversToBackend`) to verify real ingress->outbound delivery and `outbound_*` counters.
+  - outbound path now supports optional response read (`Exchange`): backend response frame is returned to ingress client over the same TCP connection,
+  - ingress metrics now include returned frame counters (`ingress_frames_returned`, `ingress_bytes_returned`, `ingress_write_errors`),
+  - added integration coverage `TestSignalLoopIngressReturnsBackendResponse` validating end-to-end request/response flow and `outbound_responses` metrics.
+  - dataplane now updates per-target health from outbound outcomes (mark unhealthy on outbound error, healthy on success), enabling runtime failover behavior in subsequent route selection.
+  - outbound now reuses persistent per-target TCP connections (connection pool keyed by target host:port) with reconnect-on-failure behavior and pool metrics (`outbound_active_conns`, `outbound_pool_hits`, `outbound_pool_misses`, `outbound_reconnects`),
+  - added unit coverage for connection reuse and reconnect in `/Users/svk/Documents/Projects.nosync/MTProxy/internal/proxy/outbound_test.go`.
+- Extended Phase 5 with runtime rate limiting controls:
+  - dataplane now enforces `--max-dh-accept-rate` per-second (`ErrDHAcceptRateExceeded`) and exports `dataplane_packets_rejected_dh_rate`,
+  - ingress now enforces `--max-accept-rate` per-second and exports `ingress_accept_rate_limited`,
+  - added unit coverage for both controls in `/Users/svk/Documents/Projects.nosync/MTProxy/internal/proxy/dataplane_test.go` and `/Users/svk/Documents/Projects.nosync/MTProxy/internal/proxy/ingress_test.go`,
+  - added real-process integration coverage in `/Users/svk/Documents/Projects.nosync/MTProxy/integration/cli/main_integration_test.go` (`TestSignalLoopIngressAppliesMaxAcceptRate`, `TestSignalLoopIngressAppliesMaxDHAcceptRate`).
+- Extended Phase 5 outbound pool stability:
+  - outbound pooled connections now support idle timeout eviction (`IdleConnTimeout`) to avoid indefinite FD retention,
+  - outbound now rejects oversize payloads before dial/send (`ErrOutboundPayloadTooLarge`, bounded by `MaxFrameSize`) to avoid unnecessary large allocations on send path,
+  - runtime stats now include `outbound_idle_evictions` metric,
+  - added unit coverage in `/Users/svk/Documents/Projects.nosync/MTProxy/internal/proxy/outbound_test.go` (`TestOutboundProxyExchangeEvictsIdleConnection`, `TestOutboundProxyExchangeRejectsOversizePayload`),
+  - `cmd/mtproto-proxy` now supports outbound timeout overrides via env (`MTPROXY_GO_OUTBOUND_CONNECT_TIMEOUT_MS`, `MTPROXY_GO_OUTBOUND_WRITE_TIMEOUT_MS`, `MTPROXY_GO_OUTBOUND_READ_TIMEOUT_MS`, `MTPROXY_GO_OUTBOUND_IDLE_TIMEOUT_MS`) and frame-size override (`MTPROXY_GO_OUTBOUND_MAX_FRAME_SIZE`) with validation and unit tests in `/Users/svk/Documents/Projects.nosync/MTProxy/cmd/mtproto-proxy/main_test.go`.
+- Extended Phase 5 burst stability integration:
+  - added `/Users/svk/Documents/Projects.nosync/MTProxy/integration/cli/main_integration_test.go` (`TestSignalLoopIngressOutboundBurstStability`) that replays 100 request/response frames through ingress->dataplane->outbound->backend and asserts zero `dataplane_packets_outbound_errors`/`ingress_frames_failed`.
+  - added `/Users/svk/Documents/Projects.nosync/MTProxy/integration/cli/main_integration_test.go` (`TestSignalLoopOutboundIdleEvictionMetrics`) that validates idle-eviction path and bounded reconnect behavior via `outbound_idle_evictions`, `outbound_dials`, and `outbound_sends`.
+  - added `/Users/svk/Documents/Projects.nosync/MTProxy/integration/cli/main_integration_test.go` (`TestSignalLoopOutboundMaxFrameSizeRejectsOversizedPayload`) that verifies oversized frames are rejected before outbound dial and reflected via `outbound_send_errors`, `dataplane_packets_outbound_errors`, and `ingress_frames_failed`.
+  - added `/Users/svk/Documents/Projects.nosync/MTProxy/integration/cli/main_integration_test.go` (`TestSignalLoopSupervisorIngressOutboundSingleWorkerBinder`) to verify supervisor-mode single-worker binding policy for ingress/outbound.
+  - added `/Users/svk/Documents/Projects.nosync/MTProxy/integration/cli/main_integration_test.go` (`TestSignalLoopIngressOutboundSoakLoadFDAndMemoryGuards`) to run mixed-size replay load with guardrails for `FD` growth and `RSS` growth (Linux `/proc` and macOS `lsof/ps` paths), plus zero-error stats assertions.
+- Added reproducible stability gate target:
+  - `make go-stability` runs the heavy integration stability suite (`burst`, `idle eviction`, `oversized payload guard`, `soak/load FD+RSS guard`).
+- Added acceptance artifact:
+  - `/Users/svk/Documents/Projects.nosync/MTProxy/docs/go-phase5-acceptance-report.md` with command-level Phase 5 acceptance results.
+
+## Integration Notes
+- The existing C build and Docker workflows are untouched.
+- Current Go binary validates:
+  - `-S/--mtproto-secret`
+  - `--mtproto-secret-file`
+  - `-P/--proxy-tag`
+  - `-H/--http-ports`
+  - `-M/--slaves`
+  - `-C/--max-special-connections`
+  - `--http-stats`
+  - `--allow-skip-dh`
+  - `-D/--domain`
+  - `--disable-tcp`
+  - `--crc32c`
+  - `--force-dh`
+  - `--max-accept-rate`
+  - `--max-dh-accept-rate`
+  - `--address`
+  - `--msg-buffers-size`
+  - `--nice`
+  - `--nat-info`
+  - `-p/--port`, `--aes-pwd`, `-u/--user`, `-v/--verbosity`, `-6/--ipv6`
+  - `-p/--port` as single port or range (`start:end`)
+  - C-like limits: max `128` HTTP ports and max `16` NAT rules
+  - interspersed option order (GNU-style, options before/after config-file)
+- Current Go binary validates and loads config at startup (including `/docker/telegram/backend.conf`) and enters runtime loop on success.
+- Startup path reports config snapshot metadata and enforces TLS-mode startup constraints before accepting runtime traffic.
+- Runtime loop now performs initial load, maintains an in-memory router, reloads config on `SIGHUP`, and exits cleanly on `SIGTERM/SIGINT`.
+- Runtime loop mode now supports initial supervisor semantics for `-M` in Go scaffold.
+- Runtime loop now handles `SIGUSR1` for log reopen semantics; when `-l/--log` is configured it reopens the log file.
+- Supervisor mode now also reopens parent log file on `SIGUSR1` and forwards the same signal to workers.
+- Supervised worker mode now monitors expected parent PID and exits if supervisor ownership is lost.
+- Runtime loop with ingress now applies `--max-accept-rate` and `--max-dh-accept-rate` as active dataplane guards.
+- Runtime loop outbound transport now evicts stale pooled backend connections and exports `outbound_idle_evictions`.
+- Runtime loop outbound transport supports env-tunable timeouts for load/soak shaping in integration and canary runs.
+- Runtime loop outbound transport supports env-tunable max frame size for memory-pressure guard scenarios.
+- Integration suite now includes burst traffic replay for ingress/outbound with stats-based stability assertions.
+- Integration suite now includes soak/load guard checks for FD and RSS growth deltas in a real runtime process.
+- CI now includes runtime-loop smoke: waits for runtime init, sends `SIGUSR1` (log reopen), then `SIGTERM`, and asserts clean exit.
+- CI/make smoke now also validates supervisor smoke path (`-M 2`) with graceful `SIGTERM`.
+- CI/make supervisor smoke now also sends `SIGUSR1` and verifies parent log reopen marker.
+- `go test ./...` passes with Phase 5 dataplane/ingress/outbound/runtime tests enabled.

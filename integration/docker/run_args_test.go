@@ -17,9 +17,14 @@ import (
 	"github.com/TelegramMessenger/MTProxy/integration/testutil"
 )
 
-func TestDockerRunStyleArgsBootstrapCheck(t *testing.T) {
+func TestDockerRunStyleArgsDefaultRuntime(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("signals are validated only on Unix-like systems")
+	}
+
 	bin := testutil.BuildProxyBinary(t)
 	dir := t.TempDir()
+	statsPort := findFreeLocalPort(t)
 
 	cfgPath := filepath.Join(dir, "backend.conf")
 	if err := os.WriteFile(cfgPath, []byte("proxy 149.154.175.50:8888;"), 0o600); err != nil {
@@ -30,39 +35,65 @@ func TestDockerRunStyleArgsBootstrapCheck(t *testing.T) {
 	if err := os.WriteFile(secretPath, []byte("0123456789abcdef0123456789abcdef\n"), 0o600); err != nil {
 		t.Fatalf("write secret file: %v", err)
 	}
+	logPath := filepath.Join(dir, "docker-default-runtime.log")
 
 	cmd := exec.Command(
 		bin,
-		"-p", "2398",
+		"-p", fmt.Sprintf("%d", statsPort),
 		"--http-stats",
 		"-H", "443",
 		"-M", "2",
 		"-C", "60000",
 		"--aes-pwd", "/etc/telegram/hello-explorers-how-are-you-doing",
 		"-u", "root",
+		"-l", logPath,
 		cfgPath,
 		"--allow-skip-dh",
 		"--nat-info", "10.0.0.2:203.0.113.10",
 		"--mtproto-secret-file", secretPath,
 		"-P", "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
 	)
-	var out bytes.Buffer
-	cmd.Stdout = &out
-	cmd.Stderr = &out
 
-	err := cmd.Run()
-	code := testutil.ExitCode(err)
-	if code != 2 {
-		t.Fatalf("unexpected exit code: got=%d err=%v output=%s", code, err, out.String())
+	if err := cmd.Start(); err != nil {
+		t.Fatalf("start default runtime: %v", err)
 	}
-	text := out.String()
+	defer func() { _ = cmd.Process.Kill() }()
+
+	waitCtx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
+	defer cancel()
+
+	if err := waitForFileContains(waitCtx, logPath, "supervisor started worker id=1"); err != nil {
+		t.Fatalf("wait for supervisor startup: %v", err)
+	}
+
+	if err := cmd.Process.Signal(syscall.SIGTERM); err != nil {
+		t.Fatalf("send SIGTERM: %v", err)
+	}
+
+	done := make(chan error, 1)
+	go func() { done <- cmd.Wait() }()
+
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("runtime process exit error: %v", err)
+		}
+	case <-time.After(8 * time.Second):
+		t.Fatalf("timeout waiting runtime process exit")
+	}
+
+	logData, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatalf("read runtime log: %v", err)
+	}
+	text := string(logData)
 	for _, marker := range []string{
-		"Go implementation bootstrap: config loaded",
-		"runtime is not implemented yet",
-		"usage:",
+		"Go bootstrap supervisor enabled: workers=2",
+		"supervisor started worker id=1",
+		"supervisor received SIGTERM, shutting down workers",
 	} {
 		if !strings.Contains(text, marker) {
-			t.Fatalf("missing marker %q in output:\n%s", marker, text)
+			t.Fatalf("missing marker %q in log output:\n%s", marker, text)
 		}
 	}
 }
@@ -136,7 +167,6 @@ func TestDockerRunStyleArgsLoopSupervisor(t *testing.T) {
 		"--mtproto-secret-file", secretPath,
 		"-P", "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
 	)
-	cmd.Env = append(os.Environ(), "MTPROXY_GO_SIGNAL_LOOP=1")
 	if err := cmd.Start(); err != nil {
 		t.Fatalf("start loop supervisor: %v", err)
 	}

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -135,10 +136,14 @@ func shutdownWorkers(
 				continue
 			}
 			delete(workerSet, ex.id)
-			if ex.err != nil && firstErr == nil {
-				firstErr = fmt.Errorf("worker %d exit error: %w", ex.id, ex.err)
-			}
 			if ex.err != nil {
+				if isExpectedShutdownExit(ex.err, shutdownSignal) {
+					fmt.Fprintf(logw, "worker id=%d pid=%d stopped\n", ex.id, wh.cmd.Process.Pid)
+					continue
+				}
+				if firstErr == nil {
+					firstErr = fmt.Errorf("worker %d exit error: %w", ex.id, ex.err)
+				}
 				fmt.Fprintf(logw, "worker id=%d pid=%d exited with error: %v\n", ex.id, wh.cmd.Process.Pid, ex.err)
 			} else {
 				fmt.Fprintf(logw, "worker id=%d pid=%d stopped\n", ex.id, wh.cmd.Process.Pid)
@@ -153,6 +158,18 @@ func shutdownWorkers(
 		}
 	}
 	return firstErr
+}
+
+func isExpectedShutdownExit(err error, shutdownSignal os.Signal) bool {
+	var exitErr *exec.ExitError
+	if !errors.As(err, &exitErr) {
+		return false
+	}
+	status, ok := exitErr.Sys().(syscall.WaitStatus)
+	if !ok || !status.Signaled() {
+		return false
+	}
+	return syscall.Signal(status.Signal()) == shutdownSignal
 }
 
 func signalDisplayName(sig os.Signal) string {

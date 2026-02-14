@@ -7,14 +7,18 @@ import (
 	"os"
 	"sync"
 	"syscall"
+	"time"
 
 	"github.com/TelegramMessenger/MTProxy/internal/config"
+	"github.com/TelegramMessenger/MTProxy/internal/protocol"
 )
 
 type Runtime struct {
 	lifecycle *Lifecycle
 	router    *Router
 	forwarder *Forwarder
+	dataplane *DataPlane
+	outbound  OutboundSender
 	logw      io.Writer
 
 	healthMu      sync.RWMutex
@@ -22,8 +26,10 @@ type Runtime struct {
 	healthChecker func(config.Target) bool
 	randSource    targetRandSource
 
-	logMu       sync.RWMutex
-	logReopener func() error
+	logMu        sync.RWMutex
+	logReopener  func() error
+	ingressStats func() IngressStats
+	outboundMu   sync.RWMutex
 }
 
 func NewRuntime(lifecycle *Lifecycle, logw io.Writer) *Runtime {
@@ -38,6 +44,7 @@ func NewRuntime(lifecycle *Lifecycle, logw io.Writer) *Runtime {
 		randSource: defaultRandSource{},
 	}
 	rt.forwarder = NewForwarder(rt)
+	rt.dataplane = NewDataPlane(rt, lifecycle.opts.MaxConn, lifecycle.opts.MaxDHAcceptRate)
 	return rt
 }
 
@@ -118,6 +125,48 @@ func (r *Runtime) ForwardStats() ForwardStats {
 	return r.forwarder.Stats()
 }
 
+func (r *Runtime) HandleMTProtoPacket(connID int64, targetDC int, frame []byte) (ForwardDecision, protocol.PacketInfo, error) {
+	decision, info, _, err := r.HandleMTProtoPacketWithResponse(connID, targetDC, frame)
+	return decision, info, err
+}
+
+func (r *Runtime) HandleMTProtoPacketWithResponse(connID int64, targetDC int, frame []byte) (ForwardDecision, protocol.PacketInfo, []byte, error) {
+	info, decision, resp, err := r.dataplane.HandlePacketWithResponse(connID, targetDC, frame)
+	return decision, info, resp, err
+}
+
+func (r *Runtime) CloseConnection(connID int64) bool {
+	return r.dataplane.CloseConnection(connID)
+}
+
+func (r *Runtime) PruneIdleConnections(idle time.Duration, now time.Time) int {
+	return r.dataplane.PruneIdle(idle, now)
+}
+
+func (r *Runtime) DataPlaneSessionState(connID int64) (protocol.SessionState, bool) {
+	return r.dataplane.SessionState(connID)
+}
+
+func (r *Runtime) DataPlaneStats() DataPlaneStats {
+	return r.dataplane.Stats()
+}
+
+func (r *Runtime) SetOutboundSender(sender OutboundSender) {
+	r.outboundMu.Lock()
+	r.outbound = sender
+	r.outboundMu.Unlock()
+}
+
+func (r *Runtime) OutboundStats() OutboundStats {
+	r.outboundMu.RLock()
+	sender := r.outbound
+	r.outboundMu.RUnlock()
+	if sender == nil {
+		return OutboundStats{}
+	}
+	return sender.Stats()
+}
+
 func (r *Runtime) SetHealthChecker(fn func(config.Target) bool) {
 	if fn == nil {
 		fn = func(config.Target) bool { return true }
@@ -130,6 +179,12 @@ func (r *Runtime) SetHealthChecker(fn func(config.Target) bool) {
 func (r *Runtime) SetLogReopener(fn func() error) {
 	r.logMu.Lock()
 	r.logReopener = fn
+	r.logMu.Unlock()
+}
+
+func (r *Runtime) SetIngressStatsProvider(fn func() IngressStats) {
+	r.logMu.Lock()
+	r.ingressStats = fn
 	r.logMu.Unlock()
 }
 
@@ -212,6 +267,26 @@ func (r *Runtime) reopenLog() (bool, error) {
 		return false, err
 	}
 	return true, nil
+}
+
+func (r *Runtime) ingressSnapshot() IngressStats {
+	r.logMu.RLock()
+	fn := r.ingressStats
+	r.logMu.RUnlock()
+	if fn == nil {
+		return IngressStats{}
+	}
+	return fn()
+}
+
+func (r *Runtime) exchangeOutbound(ctx context.Context, target config.Target, payload []byte) ([]byte, error) {
+	r.outboundMu.RLock()
+	sender := r.outbound
+	r.outboundMu.RUnlock()
+	if sender == nil {
+		return nil, nil
+	}
+	return sender.Exchange(ctx, target, payload)
 }
 
 type targetIdentity struct {

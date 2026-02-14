@@ -25,7 +25,11 @@ func (s *Session) AcceptPacket(frame []byte) (PacketInfo, error) {
 	if err != nil {
 		return PacketInfo{}, err
 	}
+	s.AcceptInfo(info)
+	return info, nil
+}
 
+func (s *Session) AcceptInfo(info PacketInfo) {
 	switch info.Kind {
 	case PacketKindEncrypted:
 		s.state = SessionStateEncrypted
@@ -34,6 +38,4 @@ func (s *Session) AcceptPacket(frame []byte) (PacketInfo, error) {
 			s.state = SessionStateHandshake
 		}
 	}
-
-	return info, nil
 }

@@ -51,7 +51,7 @@ DEPDIRS := ${DEP} $(addprefix ${DEP}/,${PROJECTS})
 ALLDIRS := ${DEPDIRS} ${OBJDIRS}
 
 
-.PHONY:	all clean go-build go-test go-smoke
+.PHONY:	all clean go-build go-test go-smoke go-stability
 
 EXELIST	:= ${EXE}/mtproto-proxy
 
@@ -170,3 +170,6 @@ go-smoke: go-build
 		grep -q "supervisor received SIGTERM, shutting down workers" supervisor.log; \
 		rm -f help.txt config-check.txt loop.log supervisor.log; \
 	'
+
+go-stability:
+	go test ./integration/cli -run 'TestSignalLoopIngressOutboundBurstStability|TestSignalLoopOutboundIdleEvictionMetrics|TestSignalLoopOutboundMaxFrameSizeRejectsOversizedPayload|TestSignalLoopIngressOutboundSoakLoadFDAndMemoryGuards' -count=1

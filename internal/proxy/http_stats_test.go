@@ -26,6 +26,14 @@ func TestStatsServerServesStats(t *testing.T) {
 		"stats_generated_at\t",
 		"has_current_config\t",
 		"forward_total\t",
+		"dataplane_packets_total\t",
+		"dataplane_packets_rejected_dh_rate\t",
+		"outbound_sends\t",
+		"outbound_responses\t",
+		"outbound_idle_evictions\t",
+		"ingress_frames_received\t",
+		"ingress_accept_rate_limited\t",
+		"ingress_frames_returned\t",
 		"router_clusters\t",
 	} {
 		if !strings.Contains(text, marker) {

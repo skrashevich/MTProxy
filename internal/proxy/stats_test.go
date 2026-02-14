@@ -82,6 +82,15 @@ func TestRuntimeStatsSnapshotAndRender(t *testing.T) {
 		"forward_total\t",
 		"forward_bytes\t",
 		"forward_last_error\t",
+		"dataplane_packets_total\t",
+		"dataplane_packets_rejected_dh_rate\t",
+		"dataplane_active_sessions\t",
+		"outbound_sends\t",
+		"outbound_responses\t",
+		"outbound_idle_evictions\t",
+		"ingress_frames_received\t",
+		"ingress_accept_rate_limited\t",
+		"ingress_frames_returned\t",
 	} {
 		if !strings.Contains(rendered, marker) {
 			t.Fatalf("stats output missing marker %q:\n%s", marker, rendered)

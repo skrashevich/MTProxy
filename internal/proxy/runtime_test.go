@@ -31,6 +31,7 @@ func TestRuntimeRunReloadAndShutdown(t *testing.T) {
 	go func() {
 		done <- rt.Run(context.Background(), sigCh)
 	}()
+	waitForRuntimeInitialized(t, rt, 2*time.Second)
 
 	if err := os.WriteFile(path, []byte("proxy 149.154.175.51:8888;"), 0o600); err != nil {
 		t.Fatalf("rewrite config: %v", err)
@@ -285,4 +286,16 @@ proxy_for 2 149.154.175.51:8888;
 	if _, ok := rt.TargetHealth(t1); ok {
 		t.Fatalf("expected removed target health entry to be dropped")
 	}
+}
+
+func waitForRuntimeInitialized(t *testing.T, rt *Runtime, timeout time.Duration) {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		if rt.StatsSnapshot().HasCurrentConfig {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatalf("runtime did not initialize within %s", timeout)
 }
