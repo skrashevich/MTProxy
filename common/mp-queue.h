@@ -21,11 +21,7 @@
 
 #pragma once
 
-#ifdef __APPLE__
-#define MPQ_USE_POSIX_SEMAPHORES	1
-#else
 #define MPQ_USE_POSIX_SEMAPHORES	0
-#endif
 
 #if MPQ_USE_POSIX_SEMAPHORES
 #include <semaphore.h>
