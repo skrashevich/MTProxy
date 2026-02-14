@@ -154,21 +154,54 @@ func TestShouldStartStatsServerSupervisedWorkerInvalidID(t *testing.T) {
 
 func TestShouldStartDataPlaneIngress(t *testing.T) {
 	t.Setenv("MTPROXY_GO_ENABLE_INGRESS", "1")
-	ok, reason := shouldStartDataPlaneIngress(false)
+	ok, reason := shouldStartDataPlaneIngress(cli.Options{}, false)
 	if !ok || reason != "" {
 		t.Fatalf("expected ingress enabled")
 	}
 	t.Setenv("MTPROXY_GO_ENABLE_INGRESS", "0")
-	ok, _ = shouldStartDataPlaneIngress(false)
+	ok, _ = shouldStartDataPlaneIngress(cli.Options{}, false)
 	if ok {
 		t.Fatalf("expected ingress disabled")
+	}
+}
+
+func TestShouldStartDataPlaneIngressByHTTPPort(t *testing.T) {
+	ok, reason := shouldStartDataPlaneIngress(cli.Options{HTTPPorts: []int{443}}, false)
+	if !ok || reason != "" {
+		t.Fatalf("expected ingress enabled by -H option, got ok=%v reason=%q", ok, reason)
+	}
+}
+
+func TestShouldStartDataPlaneIngressDisableTCP(t *testing.T) {
+	ok, reason := shouldStartDataPlaneIngress(cli.Options{DisableTCP: true, HTTPPorts: []int{443}}, false)
+	if ok {
+		t.Fatalf("expected ingress disabled when --disable-tcp is set")
+	}
+	if !strings.Contains(reason, "tcp is disabled") {
+		t.Fatalf("unexpected reason: %q", reason)
+	}
+}
+
+func TestShouldUseClientFacingIngress(t *testing.T) {
+	if !shouldUseClientFacingIngress(cli.Options{HTTPPorts: []int{443}}) {
+		t.Fatalf("expected client-facing ingress for -H port")
+	}
+	if shouldUseClientFacingIngress(cli.Options{}) {
+		t.Fatalf("did not expect client-facing ingress without -H port")
+	}
+}
+
+func TestShouldUseClientFacingIngressLegacyOverride(t *testing.T) {
+	t.Setenv("MTPROXY_GO_INGRESS_LEGACY", "1")
+	if shouldUseClientFacingIngress(cli.Options{HTTPPorts: []int{443}}) {
+		t.Fatalf("expected legacy override to disable client-facing ingress")
 	}
 }
 
 func TestShouldStartDataPlaneIngressSupervisorWorker0(t *testing.T) {
 	t.Setenv("MTPROXY_GO_ENABLE_INGRESS", "1")
 	t.Setenv("MTPROXY_GO_WORKER_ID", "0")
-	ok, reason := shouldStartDataPlaneIngress(true)
+	ok, reason := shouldStartDataPlaneIngress(cli.Options{}, true)
 	if !ok || reason != "" {
 		t.Fatalf("expected ingress enabled for worker0, got ok=%v reason=%q", ok, reason)
 	}
@@ -177,7 +210,7 @@ func TestShouldStartDataPlaneIngressSupervisorWorker0(t *testing.T) {
 func TestShouldStartDataPlaneIngressSupervisorNonZero(t *testing.T) {
 	t.Setenv("MTPROXY_GO_ENABLE_INGRESS", "1")
 	t.Setenv("MTPROXY_GO_WORKER_ID", "1")
-	ok, reason := shouldStartDataPlaneIngress(true)
+	ok, reason := shouldStartDataPlaneIngress(cli.Options{}, true)
 	if ok {
 		t.Fatalf("expected ingress disabled for non-zero worker")
 	}
@@ -186,29 +219,42 @@ func TestShouldStartDataPlaneIngressSupervisorNonZero(t *testing.T) {
 	}
 }
 
-func TestResolveIngressAddrFromEnv(t *testing.T) {
+func TestResolveIngressAddrsFromEnv(t *testing.T) {
 	t.Setenv("MTPROXY_GO_INGRESS_ADDR", "127.0.0.1:12345")
-	addr, err := resolveIngressAddr(cli.Options{})
+	addrs, err := resolveIngressAddrs(cli.Options{})
 	if err != nil {
 		t.Fatalf("resolve ingress addr: %v", err)
 	}
-	if addr != "127.0.0.1:12345" {
-		t.Fatalf("unexpected ingress addr: %q", addr)
+	if len(addrs) != 1 || addrs[0] != "127.0.0.1:12345" {
+		t.Fatalf("unexpected ingress addrs: %#v", addrs)
 	}
 }
 
-func TestResolveIngressAddrFromOptions(t *testing.T) {
-	addr, err := resolveIngressAddr(cli.Options{LocalPort: 443, BindAddress: "127.0.0.1"})
+func TestResolveIngressAddrsFromHTTPPorts(t *testing.T) {
+	addrs, err := resolveIngressAddrs(cli.Options{HTTPPorts: []int{443, 443, 5443}, BindAddress: "127.0.0.1"})
 	if err != nil {
 		t.Fatalf("resolve ingress addr: %v", err)
 	}
-	if addr != "127.0.0.1:443" {
-		t.Fatalf("unexpected ingress addr: %q", addr)
+	if len(addrs) != 2 {
+		t.Fatalf("unexpected ingress addrs count: %#v", addrs)
+	}
+	if addrs[0] != "127.0.0.1:443" || addrs[1] != "127.0.0.1:5443" {
+		t.Fatalf("unexpected ingress addrs: %#v", addrs)
 	}
 }
 
-func TestResolveIngressAddrMissingPort(t *testing.T) {
-	_, err := resolveIngressAddr(cli.Options{LocalPortRaw: "10000:10010"})
+func TestResolveIngressAddrsFromLocalPortFallback(t *testing.T) {
+	addrs, err := resolveIngressAddrs(cli.Options{LocalPort: 443, BindAddress: "127.0.0.1"})
+	if err != nil {
+		t.Fatalf("resolve ingress addrs: %v", err)
+	}
+	if len(addrs) != 1 || addrs[0] != "127.0.0.1:443" {
+		t.Fatalf("unexpected ingress addrs: %#v", addrs)
+	}
+}
+
+func TestResolveIngressAddrsMissingPort(t *testing.T) {
+	_, err := resolveIngressAddrs(cli.Options{LocalPortRaw: "10000:10010"})
 	if err == nil {
 		t.Fatalf("expected ingress resolve error without single port")
 	}
@@ -216,21 +262,38 @@ func TestResolveIngressAddrMissingPort(t *testing.T) {
 
 func TestShouldStartOutboundTransport(t *testing.T) {
 	t.Setenv("MTPROXY_GO_ENABLE_OUTBOUND", "1")
-	ok, reason := shouldStartOutboundTransport(false)
+	ok, reason := shouldStartOutboundTransport(cli.Options{}, false, false)
 	if !ok || reason != "" {
 		t.Fatalf("expected outbound enabled")
 	}
 	t.Setenv("MTPROXY_GO_ENABLE_OUTBOUND", "0")
-	ok, _ = shouldStartOutboundTransport(false)
+	ok, _ = shouldStartOutboundTransport(cli.Options{}, true, false)
 	if ok {
 		t.Fatalf("expected outbound disabled")
+	}
+}
+
+func TestShouldStartOutboundTransportByIngress(t *testing.T) {
+	ok, reason := shouldStartOutboundTransport(cli.Options{}, true, false)
+	if !ok || reason != "" {
+		t.Fatalf("expected outbound enabled when ingress is enabled, got ok=%v reason=%q", ok, reason)
+	}
+}
+
+func TestShouldStartOutboundTransportDisableTCP(t *testing.T) {
+	ok, reason := shouldStartOutboundTransport(cli.Options{DisableTCP: true}, true, false)
+	if ok {
+		t.Fatalf("expected outbound disabled when --disable-tcp is set")
+	}
+	if !strings.Contains(reason, "tcp is disabled") {
+		t.Fatalf("unexpected reason: %q", reason)
 	}
 }
 
 func TestShouldStartOutboundTransportSupervisorWorker0(t *testing.T) {
 	t.Setenv("MTPROXY_GO_ENABLE_OUTBOUND", "1")
 	t.Setenv("MTPROXY_GO_WORKER_ID", "0")
-	ok, reason := shouldStartOutboundTransport(true)
+	ok, reason := shouldStartOutboundTransport(cli.Options{}, false, true)
 	if !ok || reason != "" {
 		t.Fatalf("expected outbound enabled for worker0, got ok=%v reason=%q", ok, reason)
 	}
@@ -239,7 +302,7 @@ func TestShouldStartOutboundTransportSupervisorWorker0(t *testing.T) {
 func TestShouldStartOutboundTransportSupervisorNonZero(t *testing.T) {
 	t.Setenv("MTPROXY_GO_ENABLE_OUTBOUND", "1")
 	t.Setenv("MTPROXY_GO_WORKER_ID", "1")
-	ok, reason := shouldStartOutboundTransport(true)
+	ok, reason := shouldStartOutboundTransport(cli.Options{}, false, true)
 	if ok {
 		t.Fatalf("expected outbound disabled for non-zero worker")
 	}

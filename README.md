@@ -75,7 +75,14 @@ Run Go loop with supervisor mode (`-M` workers, signal forwarding scaffold):
 ```
 
 In supervisor mode with `--http-stats`, only `worker 0` binds the stats endpoint to avoid port conflicts.
-The same single-worker binding policy is used for `MTPROXY_GO_ENABLE_INGRESS=1` and `MTPROXY_GO_ENABLE_OUTBOUND=1`.
+Ingress/outbound for Go runtime are enabled automatically when client ports are provided via `-H/--http-ports`.
+`MTPROXY_GO_ENABLE_INGRESS` and `MTPROXY_GO_ENABLE_OUTBOUND` still override startup (`1` = force enable, any other non-empty value = disable).
+The same single-worker binding policy is used in supervisor mode: only `worker 0` binds ingress/outbound components.
+Ingress bind address can be overridden by `MTPROXY_GO_INGRESS_ADDR`; otherwise Go runtime binds to `--address` (or `0.0.0.0`) on each `-H` port.
+Client-facing Go ingress currently supports MTProxy stream transports: plain `abridged/intermediate/padded`
+and `obfuscated2` (`0xefefefef`, `0xeeeeeeee`, `0xdddddddd` tags) with `-S/--mtproto-secret` matching.
+TLS camouflage transport mode (`-D/--domain`) is not implemented in Go runtime yet.
+`--http-stats` still requires `-p/--port` (loopback stats listener), `-H` alone is not enough.
 Outbound transport tuning envs: `MTPROXY_GO_OUTBOUND_CONNECT_TIMEOUT_MS`, `MTPROXY_GO_OUTBOUND_WRITE_TIMEOUT_MS`,
 `MTPROXY_GO_OUTBOUND_READ_TIMEOUT_MS`, `MTPROXY_GO_OUTBOUND_IDLE_TIMEOUT_MS`, `MTPROXY_GO_OUTBOUND_MAX_FRAME_SIZE`.
 

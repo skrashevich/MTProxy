@@ -75,7 +75,7 @@ func main() {
 		runner.Runtime().SetLogReopener(reopener.Reopen)
 	}
 	var statsServer *proxy.StatsServer
-	var ingressServer *proxy.IngressServer
+	var ingressServers []ingressStatsServer
 	var outbound proxy.OutboundSender
 	if opts.HTTPStats {
 		if serveStats, reason := shouldStartStatsServer(supervisedWorker); !serveStats {
@@ -93,35 +93,38 @@ func main() {
 			}
 		}
 	}
-	if serveIngress, reason := shouldStartDataPlaneIngress(supervisedWorker); !serveIngress {
+	if serveIngress, reason := shouldStartDataPlaneIngress(opts, supervisedWorker); !serveIngress {
 		if reason != "" {
 			fmt.Fprintln(logw, reason)
 		}
 	} else {
-		ingressAddr, err := resolveIngressAddr(opts)
+		ingressAddrs, err := resolveIngressAddrs(opts)
 		if err != nil {
-			fmt.Fprintf(logw, "failed to resolve ingress address: %v\n", err)
+			fmt.Fprintf(logw, "failed to resolve ingress addresses: %v\n", err)
 			os.Exit(2)
 		}
-		ingressServer, err = proxy.StartIngressServer(
-			runner.Runtime(),
-			proxy.IngressConfig{
-				Addr:          ingressAddr,
-				TargetDC:      0,
-				MaxFrameSize:  4 << 20,
-				IdleTimeout:   45 * time.Second,
-				MaxAcceptRate: opts.MaxAcceptRate,
-				ReadBufBytes:  int(opts.MsgBuffersSizeBytes),
-			},
-			logw,
-		)
-		if err != nil {
-			fmt.Fprintf(logw, "failed to start ingress server on %s: %v\n", ingressAddr, err)
-			os.Exit(2)
+		for _, ingressAddr := range ingressAddrs {
+			ingressServer, startErr := startIngressServer(runner.Runtime(), opts, ingressAddr, logw)
+			if startErr != nil {
+				fmt.Fprintf(logw, "failed to start ingress server on %s: %v\n", ingressAddr, startErr)
+				for _, started := range ingressServers {
+					ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+					_ = started.Shutdown(ctx)
+					cancel()
+				}
+				os.Exit(2)
+			}
+			ingressServers = append(ingressServers, ingressServer)
 		}
-		runner.Runtime().SetIngressStatsProvider(ingressServer.Stats)
+		runner.Runtime().SetIngressStatsProvider(func() proxy.IngressStats {
+			total := proxy.IngressStats{}
+			for _, srv := range ingressServers {
+				total = mergeIngressStats(total, srv.Stats())
+			}
+			return total
+		})
 	}
-	if serveOutbound, reason := shouldStartOutboundTransport(supervisedWorker); !serveOutbound {
+	if serveOutbound, reason := shouldStartOutboundTransport(opts, len(ingressServers) > 0, supervisedWorker); !serveOutbound {
 		if reason != "" {
 			fmt.Fprintln(logw, reason)
 		}
@@ -150,12 +153,12 @@ func main() {
 			fmt.Fprintf(logw, "stats server shutdown error: %v\n", err)
 		}
 	}
-	if ingressServer != nil {
+	for _, ingressServer := range ingressServers {
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-		defer cancel()
 		if err := ingressServer.Shutdown(ctx); err != nil {
 			fmt.Fprintf(logw, "ingress server shutdown error: %v\n", err)
 		}
+		cancel()
 	}
 	if outbound != nil {
 		if err := outbound.Close(); err != nil {
@@ -179,6 +182,56 @@ func setupLogWriter(opts cli.Options) (io.Writer, func(), error) {
 	}, nil
 }
 
+type ingressStatsServer interface {
+	Shutdown(context.Context) error
+	Stats() proxy.IngressStats
+}
+
+func startIngressServer(
+	rt *proxy.Runtime,
+	opts cli.Options,
+	addr string,
+	logw io.Writer,
+) (ingressStatsServer, error) {
+	if shouldUseClientFacingIngress(opts) {
+		return proxy.StartClientIngressServer(
+			rt,
+			proxy.ClientIngressConfig{
+				Addr:          addr,
+				TargetDC:      0,
+				MaxFrameSize:  4 << 20,
+				IdleTimeout:   45 * time.Second,
+				MaxAcceptRate: opts.MaxAcceptRate,
+				ReadBufBytes:  int(opts.MsgBuffersSizeBytes),
+				Secrets:       opts.Secrets,
+			},
+			logw,
+		)
+	}
+	return proxy.StartIngressServer(
+		rt,
+		proxy.IngressConfig{
+			Addr:          addr,
+			TargetDC:      0,
+			MaxFrameSize:  4 << 20,
+			IdleTimeout:   45 * time.Second,
+			MaxAcceptRate: opts.MaxAcceptRate,
+			ReadBufBytes:  int(opts.MsgBuffersSizeBytes),
+		},
+		logw,
+	)
+}
+
+func shouldUseClientFacingIngress(opts cli.Options) bool {
+	if len(opts.HTTPPorts) == 0 {
+		return false
+	}
+	if os.Getenv("MTPROXY_GO_INGRESS_LEGACY") == "1" {
+		return false
+	}
+	return true
+}
+
 func isSupervisedWorkerProcess() bool {
 	return os.Getenv("MTPROXY_GO_SUPERVISED_WORKER") == "1"
 }
@@ -200,8 +253,15 @@ func shouldStartStatsServer(supervisedWorker bool) (bool, string) {
 	return true, ""
 }
 
-func shouldStartDataPlaneIngress(supervisedWorker bool) (bool, string) {
-	if os.Getenv("MTPROXY_GO_ENABLE_INGRESS") != "1" {
+func shouldStartDataPlaneIngress(opts cli.Options, supervisedWorker bool) (bool, string) {
+	if opts.DisableTCP {
+		return false, "tcp is disabled by --disable-tcp, skipping ingress startup"
+	}
+	if raw := os.Getenv("MTPROXY_GO_ENABLE_INGRESS"); raw != "" {
+		if raw != "1" {
+			return false, ""
+		}
+	} else if len(opts.HTTPPorts) == 0 {
 		return false, ""
 	}
 	if !supervisedWorker {
@@ -220,8 +280,15 @@ func shouldStartDataPlaneIngress(supervisedWorker bool) (bool, string) {
 	return true, ""
 }
 
-func shouldStartOutboundTransport(supervisedWorker bool) (bool, string) {
-	if os.Getenv("MTPROXY_GO_ENABLE_OUTBOUND") != "1" {
+func shouldStartOutboundTransport(opts cli.Options, ingressEnabled bool, supervisedWorker bool) (bool, string) {
+	if opts.DisableTCP {
+		return false, "tcp is disabled by --disable-tcp, skipping outbound startup"
+	}
+	if raw := os.Getenv("MTPROXY_GO_ENABLE_OUTBOUND"); raw != "" {
+		if raw != "1" {
+			return false, ""
+		}
+	} else if !ingressEnabled {
 		return false, ""
 	}
 	if !supervisedWorker {
@@ -300,18 +367,48 @@ func intFromEnv(name string, fallback int, min int) (int, error) {
 	return v, nil
 }
 
-func resolveIngressAddr(opts cli.Options) (string, error) {
+func resolveIngressAddrs(opts cli.Options) ([]string, error) {
 	if addr := os.Getenv("MTPROXY_GO_INGRESS_ADDR"); addr != "" {
-		return addr, nil
-	}
-	if opts.LocalPort <= 0 {
-		return "", fmt.Errorf("ingress requires single local port (-p/--port), got %q", opts.LocalPortRaw)
+		return []string{addr}, nil
 	}
 	host := opts.BindAddress
 	if host == "" {
 		host = "0.0.0.0"
 	}
-	return fmt.Sprintf("%s:%d", host, opts.LocalPort), nil
+	if len(opts.HTTPPorts) > 0 {
+		addrs := make([]string, 0, len(opts.HTTPPorts))
+		seen := make(map[int]struct{}, len(opts.HTTPPorts))
+		for _, port := range opts.HTTPPorts {
+			if _, ok := seen[port]; ok {
+				continue
+			}
+			seen[port] = struct{}{}
+			addrs = append(addrs, fmt.Sprintf("%s:%d", host, port))
+		}
+		return addrs, nil
+	}
+	if opts.LocalPort > 0 {
+		return []string{fmt.Sprintf("%s:%d", host, opts.LocalPort)}, nil
+	}
+	return nil, fmt.Errorf("ingress requires client port (-H/--http-ports) or single local port (-p/--port), got -H=%v -p=%q", opts.HTTPPorts, opts.LocalPortRaw)
+}
+
+func mergeIngressStats(a, b proxy.IngressStats) proxy.IngressStats {
+	return proxy.IngressStats{
+		AcceptedConnections: a.AcceptedConnections + b.AcceptedConnections,
+		AcceptRateLimited:   a.AcceptRateLimited + b.AcceptRateLimited,
+		ClosedConnections:   a.ClosedConnections + b.ClosedConnections,
+		ActiveConnections:   a.ActiveConnections + b.ActiveConnections,
+		FramesReceived:      a.FramesReceived + b.FramesReceived,
+		FramesHandled:       a.FramesHandled + b.FramesHandled,
+		FramesReturned:      a.FramesReturned + b.FramesReturned,
+		FramesFailed:        a.FramesFailed + b.FramesFailed,
+		BytesReceived:       a.BytesReceived + b.BytesReceived,
+		BytesReturned:       a.BytesReturned + b.BytesReturned,
+		ReadErrors:          a.ReadErrors + b.ReadErrors,
+		WriteErrors:         a.WriteErrors + b.WriteErrors,
+		InvalidFrames:       a.InvalidFrames + b.InvalidFrames,
+	}
 }
 
 func supervisedWorkerParentContext(supervisedWorker bool, logw io.Writer) (context.Context, context.CancelFunc) {
