@@ -2,3 +2,5 @@ objs
 dep
 .DS_Store
 artifacts/
+proxy-multi.conf
+proxy-secret
