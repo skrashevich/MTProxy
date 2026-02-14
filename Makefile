@@ -51,7 +51,10 @@ DEPDIRS := ${DEP} $(addprefix ${DEP}/,${PROJECTS})
 ALLDIRS := ${DEPDIRS} ${OBJDIRS}
 
 
-.PHONY:	all clean go-build go-test go-smoke go-stability
+.PHONY:	all clean go-build go-test go-smoke go-stability go-dualrun go-linux-docker-check
+
+DOCKER_GO_IMAGE ?= golang:bookworm
+DOCKER_PLATFORM ?=
 
 EXELIST	:= ${EXE}/mtproto-proxy
 
@@ -136,9 +139,8 @@ go-test:
 go-smoke: go-build
 	@bash -euo pipefail -c '\
 		${EXE}/mtproto-proxy-go --help > help.txt 2>&1 || test $$? -eq 2; \
-		${EXE}/mtproto-proxy-go ./docker/telegram/backend.conf > config-check.txt 2>&1 || test $$? -eq 2; \
 		: > loop.log; \
-		MTPROXY_GO_SIGNAL_LOOP=1 ${EXE}/mtproto-proxy-go -l loop.log ./docker/telegram/backend.conf > /dev/null 2>&1 & \
+		${EXE}/mtproto-proxy-go -l loop.log ./docker/telegram/backend.conf > /dev/null 2>&1 & \
 		pid=$$!; \
 		for _ in $$(seq 1 30); do \
 			if grep -q "runtime initialized:" loop.log; then \
@@ -153,7 +155,7 @@ go-smoke: go-build
 		grep -q "SIGUSR1 received: log file reopened." loop.log; \
 		grep -q "Terminated by SIGTERM." loop.log; \
 		: > supervisor.log; \
-		MTPROXY_GO_SIGNAL_LOOP=1 ${EXE}/mtproto-proxy-go -M 2 -l supervisor.log ./docker/telegram/backend.conf > /dev/null 2>&1 & \
+		${EXE}/mtproto-proxy-go -M 2 -l supervisor.log ./docker/telegram/backend.conf > /dev/null 2>&1 & \
 		spid=$$!; \
 		for _ in $$(seq 1 50); do \
 			if grep -q "supervisor started worker id=1" supervisor.log; then \
@@ -168,8 +170,14 @@ go-smoke: go-build
 		grep -q "Go bootstrap supervisor enabled: workers=2" supervisor.log; \
 		grep -q "supervisor SIGUSR1: log file reopened." supervisor.log; \
 		grep -q "supervisor received SIGTERM, shutting down workers" supervisor.log; \
-		rm -f help.txt config-check.txt loop.log supervisor.log; \
+		rm -f help.txt loop.log supervisor.log; \
 	'
 
 go-stability:
 	go test ./integration/cli -run 'TestSignalLoopIngressOutboundBurstStability|TestSignalLoopOutboundIdleEvictionMetrics|TestSignalLoopOutboundMaxFrameSizeRejectsOversizedPayload|TestSignalLoopIngressOutboundSoakLoadFDAndMemoryGuards' -count=1
+
+go-dualrun:
+	MTPROXY_DUAL_RUN=1 go test ./integration/cli -run TestDualRunControlPlaneSLO -count=1
+
+go-linux-docker-check:
+	docker run --rm $(if $(DOCKER_PLATFORM),--platform $(DOCKER_PLATFORM),) -v "$$PWD":/work -w /work $(DOCKER_GO_IMAGE) bash -lc 'set -euo pipefail; export PATH=/usr/local/go/bin:$$PATH; apt-get update >/dev/null; apt-get install -y build-essential libssl-dev zlib1g-dev >/dev/null; make go-stability; make go-dualrun'

@@ -44,7 +44,13 @@ Build and test Go code:
 make go-test
 make go-build
 make go-stability
+make go-dualrun
+make go-linux-docker-check
 ```
+`make go-dualrun` runs Linux-only dual-run harness (`C vs Go`) and may skip on non-Linux hosts.
+`make go-linux-docker-check` runs Linux checks in Docker (`go-stability` + `go-dualrun`).
+For forced x86_64 container run (full dual-run on ARM hosts), use:
+`make go-linux-docker-check DOCKER_PLATFORM=linux/amd64`.
 
 Run Go bootstrap config check:
 ```bash

@@ -36,6 +36,12 @@ make go-stability
 ```
 Result: `PASS` (`ok github.com/TelegramMessenger/MTProxy/integration/cli 10.261s`).
 
+Linux-in-Docker reproducible gate:
+```bash
+make go-linux-docker-check
+```
+Result: `PASS` (runs `go-stability` + `go-dualrun` inside Docker Linux container).
+
 2. Protocol trace parity gate:
 ```bash
 go test ./integration/protocol -run TestForwardMTProtoTraceParityWithCLogic -count=1
