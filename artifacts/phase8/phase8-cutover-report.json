@@ -1,0 +1,35 @@
+{
+  "generated_at": "2026-02-14T10:32:19Z",
+  "go_os": "linux",
+  "go_arch": "amd64",
+  "thresholds": {
+    "shutdown": "cutover_go and rollback_c \u003c= baseline_c*3 + 500ms",
+    "startup": "cutover_go and rollback_c \u003c= baseline_c*3 + 500ms"
+  },
+  "steps": [
+    {
+      "name": "baseline_c",
+      "binary": "mtproto-proxy",
+      "startup_latency_ms": 282.429542,
+      "shutdown_latency_ms": 6.443709,
+      "stats_line_count": 199,
+      "stats_sample": "pid\t6673"
+    },
+    {
+      "name": "cutover_go",
+      "binary": "mtproto-proxy-go",
+      "startup_latency_ms": 272.240875,
+      "shutdown_latency_ms": 7.757583,
+      "stats_line_count": 66,
+      "stats_sample": "stats_generated_at\t1771065138"
+    },
+    {
+      "name": "rollback_c",
+      "binary": "mtproto-proxy",
+      "startup_latency_ms": 261.384542,
+      "shutdown_latency_ms": 13.125667,
+      "stats_line_count": 199,
+      "stats_sample": "pid\t6711"
+    }
+  ]
+}

@@ -1,0 +1,4 @@
+=== RUN   TestPhase8CutoverRollbackDrill
+--- PASS: TestPhase8CutoverRollbackDrill (4.65s)
+PASS
+ok  	github.com/TelegramMessenger/MTProxy/integration/cli	4.765s

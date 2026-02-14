@@ -1,0 +1,21 @@
+=== RUN   TestDualRunControlPlaneSLO
+    dual_run_integration_test.go:46: dual-run cycle: go_shutdown=4.8315ms c_shutdown=8.888667ms
+--- PASS: TestDualRunControlPlaneSLO (11.10s)
+=== RUN   TestDualRunDataplaneCanarySLO
+    dual_run_integration_test.go:110: dual-run dataplane canary:
+          go_connect success=1.000 p95=12.850166ms avg=3.033636ms
+          c_connect success=1.000 p95=47.404167ms avg=4.669544ms
+          go_stats success=1.000 p95=56.7975ms avg=11.545818ms
+          c_stats success=1.000 p95=33.89775ms avg=22.390245ms
+          go_shutdown=8.732959ms c_shutdown=6.804334ms
+--- PASS: TestDualRunDataplaneCanarySLO (0.99s)
+=== RUN   TestDualRunDataplaneLoadSLO
+    dual_run_integration_test.go:202: dual-run dataplane load (load):
+          go_connect success=1.000 p95=2.4825ms p99=4.958583ms avg=639.172µs
+          c_connect success=1.000 p95=6.366334ms p99=7.539666ms avg=1.689355ms
+          go_stats success=1.000 p95=33.786334ms p99=54.895876ms avg=8.212357ms
+          c_stats success=1.000 p95=81.226292ms p99=82.297041ms avg=34.992286ms
+          go_shutdown=7.633167ms c_shutdown=10.385125ms
+--- PASS: TestDualRunDataplaneLoadSLO (1.09s)
+PASS
+ok  	github.com/TelegramMessenger/MTProxy/integration/cli	13.311s

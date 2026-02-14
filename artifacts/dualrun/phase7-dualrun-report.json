@@ -1,0 +1,138 @@
+{
+  "generated_at": "2026-02-14T09:34:40Z",
+  "go_os": "linux",
+  "go_arch": "amd64",
+  "entries": [
+    {
+      "name": "control_plane_slo",
+      "thresholds": {
+        "shutdown": "go \u003c= c*2 + 200ms"
+      },
+      "metrics": {
+        "c_shutdown_ms": 8.888667,
+        "go_shutdown_ms": 4.8315
+      }
+    },
+    {
+      "name": "dataplane_canary_slo",
+      "thresholds": {
+        "connect_p95": "go \u003c= c*2.0 + 25ms",
+        "connect_p99": "go \u003c= c*3.0 + 60ms",
+        "connect_success_rate": "go + 0.02 \u003e= c",
+        "shutdown": "go \u003c= c*2 + 250ms",
+        "stats_p95": "go \u003c= c*2.5 + 40ms",
+        "stats_p99": "go \u003c= c*3.5 + 100ms",
+        "stats_success_rate": "go + 0.02 \u003e= c"
+      },
+      "metrics": {
+        "c_connect": {
+          "attempts": 160,
+          "avg_ms": 4.669544,
+          "failures": 0,
+          "max_ms": 56.361916,
+          "p50_ms": 0.195666,
+          "p95_ms": 47.404167,
+          "p99_ms": 51.444625,
+          "success_rate": 1,
+          "successes": 160
+        },
+        "c_shutdown_ms": 6.804334,
+        "c_stats": {
+          "attempts": 120,
+          "avg_ms": 22.390245,
+          "failures": 0,
+          "max_ms": 39.39325,
+          "p50_ms": 20.47725,
+          "p95_ms": 33.89775,
+          "p99_ms": 36.983417,
+          "success_rate": 1,
+          "successes": 120
+        },
+        "go_connect": {
+          "attempts": 160,
+          "avg_ms": 3.033636,
+          "failures": 0,
+          "max_ms": 23.997666,
+          "p50_ms": 0.493459,
+          "p95_ms": 12.850166,
+          "p99_ms": 22.567292,
+          "success_rate": 1,
+          "successes": 160
+        },
+        "go_shutdown_ms": 8.732959,
+        "go_stats": {
+          "attempts": 120,
+          "avg_ms": 11.545818,
+          "failures": 0,
+          "max_ms": 61.238625,
+          "p50_ms": 5.332625,
+          "p95_ms": 56.7975,
+          "p99_ms": 59.2615,
+          "success_rate": 1,
+          "successes": 120
+        }
+      }
+    },
+    {
+      "name": "dataplane_load_slo",
+      "thresholds": {
+        "connect_p95": "go \u003c= c*2.0 + 25ms",
+        "connect_p99": "go \u003c= c*3.0 + 80ms",
+        "connect_success_rate": "go + 0.02 \u003e= c",
+        "profile": "load",
+        "shutdown": "go \u003c= c*2 + 300ms",
+        "stats_p95": "go \u003c= c*2.5 + 60ms",
+        "stats_p99": "go \u003c= c*4.0 + 150ms",
+        "stats_success_rate": "go + 0.02 \u003e= c"
+      },
+      "metrics": {
+        "c_connect": {
+          "attempts": 420,
+          "avg_ms": 1.689355,
+          "failures": 0,
+          "max_ms": 10.422542,
+          "p50_ms": 0.934917,
+          "p95_ms": 6.366334,
+          "p99_ms": 7.539666,
+          "success_rate": 1,
+          "successes": 420
+        },
+        "c_shutdown_ms": 10.385125,
+        "c_stats": {
+          "attempts": 260,
+          "avg_ms": 34.992286,
+          "failures": 0,
+          "max_ms": 83.179625,
+          "p50_ms": 27.921917,
+          "p95_ms": 81.226292,
+          "p99_ms": 82.297041,
+          "success_rate": 1,
+          "successes": 260
+        },
+        "go_connect": {
+          "attempts": 420,
+          "avg_ms": 0.639172,
+          "failures": 0,
+          "max_ms": 5.838542,
+          "p50_ms": 0.345792,
+          "p95_ms": 2.4825,
+          "p99_ms": 4.958583,
+          "success_rate": 1,
+          "successes": 420
+        },
+        "go_shutdown_ms": 7.633167,
+        "go_stats": {
+          "attempts": 260,
+          "avg_ms": 8.212357,
+          "failures": 0,
+          "max_ms": 55.991917,
+          "p50_ms": 3.550584,
+          "p95_ms": 33.786334,
+          "p99_ms": 54.895876,
+          "success_rate": 1,
+          "successes": 260
+        }
+      }
+    }
+  ]
+}
