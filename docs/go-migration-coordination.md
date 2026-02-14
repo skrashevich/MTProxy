@@ -142,9 +142,11 @@ This file tracks cross-agent integration status for the C -> Go migration.
   - `/Users/svk/Documents/Projects.nosync/MTProxy/docs/go-phase5-acceptance-report.md` with command-level Phase 5 acceptance results.
 - Started Phase 7 dual-run rollout harness:
   - added Linux-only C-vs-Go control-plane comparison test `/Users/svk/Documents/Projects.nosync/MTProxy/integration/cli/dual_run_integration_test.go` (`TestDualRunControlPlaneSLO`), gated by `MTPROXY_DUAL_RUN=1`,
+  - added Linux-only C-vs-Go dataplane canary comparison test `/Users/svk/Documents/Projects.nosync/MTProxy/integration/cli/dual_run_integration_test.go` (`TestDualRunDataplaneCanarySLO`) that measures listener connect canary and `/stats` request canary (`success-rate`, `p95`, `avg`) with explicit SLO guards against C baseline,
   - dual-run test currently requires `linux/amd64` (C build flags are x86-specific),
   - added C binary build helper `/Users/svk/Documents/Projects.nosync/MTProxy/integration/testutil/c_binary.go` (`BuildCProxyBinary`),
   - added `make go-dualrun` target to run dual-run harness reproducibly.
+  - added Phase 7 baseline artifact `/Users/svk/Documents/Projects.nosync/MTProxy/docs/go-phase7-dualrun-baseline.md` with reproducible command and measured canary metrics.
 - Added Docker-based Linux validation target:
   - `make go-linux-docker-check` runs `go-stability` and `go-dualrun` in a Linux container (`DOCKER_GO_IMAGE`, default `golang:bookworm`; optional `DOCKER_PLATFORM=linux/amd64` for full dual-run on ARM hosts).
 

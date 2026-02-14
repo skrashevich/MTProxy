@@ -177,7 +177,7 @@ go-stability:
 	go test ./integration/cli -run 'TestSignalLoopIngressOutboundBurstStability|TestSignalLoopOutboundIdleEvictionMetrics|TestSignalLoopOutboundMaxFrameSizeRejectsOversizedPayload|TestSignalLoopIngressOutboundSoakLoadFDAndMemoryGuards' -count=1
 
 go-dualrun:
-	MTPROXY_DUAL_RUN=1 go test ./integration/cli -run TestDualRunControlPlaneSLO -count=1
+	MTPROXY_DUAL_RUN=1 go test ./integration/cli -run 'TestDualRunControlPlaneSLO|TestDualRunDataplaneCanarySLO' -count=1
 
 go-linux-docker-check:
 	docker run --rm $(if $(DOCKER_PLATFORM),--platform $(DOCKER_PLATFORM),) -v "$$PWD":/work -w /work $(DOCKER_GO_IMAGE) bash -lc 'set -euo pipefail; export PATH=/usr/local/go/bin:$$PATH; apt-get update >/dev/null; apt-get install -y build-essential libssl-dev zlib1g-dev >/dev/null; make go-stability; make go-dualrun'
