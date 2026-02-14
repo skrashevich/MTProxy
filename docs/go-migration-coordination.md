@@ -150,6 +150,7 @@ This file tracks cross-agent integration status for the C -> Go migration.
   - added `make go-dualrun` target to run dual-run harness reproducibly.
   - added `make go-dualrun-report` target to produce machine-readable report (`MTPROXY_DUAL_RUN_REPORT`, JSON) and verbose test log artifact under `/Users/svk/Documents/Projects.nosync/MTProxy/artifacts/dualrun`.
   - added Phase 7 baseline artifact `/Users/svk/Documents/Projects.nosync/MTProxy/docs/go-phase7-dualrun-baseline.md` with reproducible command and measured canary metrics.
+  - added formal Phase 7 acceptance artifact `/Users/svk/Documents/Projects.nosync/MTProxy/docs/go-phase7-acceptance-report.md`; Gate 3 (`dual-run not worse than C on agreed SLO`) is marked `PASS` for branch `golang`.
 - Added Docker-based Linux validation target:
   - `make go-linux-docker-check` runs `go-stability` and `go-dualrun` in a Linux container (`DOCKER_GO_IMAGE`, default `golang:bookworm`; optional `DOCKER_PLATFORM=linux/amd64` for full dual-run on ARM hosts).
 
