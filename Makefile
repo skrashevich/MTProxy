@@ -51,10 +51,12 @@ DEPDIRS := ${DEP} $(addprefix ${DEP}/,${PROJECTS})
 ALLDIRS := ${DEPDIRS} ${OBJDIRS}
 
 
-.PHONY:	all clean go-build go-test go-smoke go-stability go-dualrun go-linux-docker-check
+.PHONY:	all clean go-build go-test go-smoke go-stability go-dualrun go-dualrun-report go-linux-docker-check
 
 DOCKER_GO_IMAGE ?= golang:bookworm
 DOCKER_PLATFORM ?=
+DUALRUN_TEST_PATTERN ?= TestDualRunControlPlaneSLO|TestDualRunDataplaneCanarySLO|TestDualRunDataplaneLoadSLO
+DUALRUN_REPORT_PATH ?= $(CURDIR)/artifacts/dualrun/phase7-dualrun-report.json
 
 EXELIST	:= ${EXE}/mtproto-proxy
 
@@ -177,7 +179,11 @@ go-stability:
 	go test ./integration/cli -run 'TestSignalLoopIngressOutboundBurstStability|TestSignalLoopOutboundIdleEvictionMetrics|TestSignalLoopOutboundMaxFrameSizeRejectsOversizedPayload|TestSignalLoopIngressOutboundSoakLoadFDAndMemoryGuards' -count=1
 
 go-dualrun:
-	MTPROXY_DUAL_RUN=1 go test ./integration/cli -run 'TestDualRunControlPlaneSLO|TestDualRunDataplaneCanarySLO' -count=1
+	MTPROXY_DUAL_RUN=1 go test ./integration/cli -run '$(DUALRUN_TEST_PATTERN)' -count=1
+
+go-dualrun-report:
+	mkdir -p artifacts/dualrun
+	MTPROXY_DUAL_RUN=1 MTPROXY_DUAL_RUN_REPORT=$(DUALRUN_REPORT_PATH) go test -v ./integration/cli -run '$(DUALRUN_TEST_PATTERN)' -count=1 | tee artifacts/dualrun/go-dualrun.log
 
 go-linux-docker-check:
 	docker run --rm $(if $(DOCKER_PLATFORM),--platform $(DOCKER_PLATFORM),) -v "$$PWD":/work -w /work $(DOCKER_GO_IMAGE) bash -lc 'set -euo pipefail; export PATH=/usr/local/go/bin:$$PATH; apt-get update >/dev/null; apt-get install -y build-essential libssl-dev zlib1g-dev >/dev/null; make go-stability; make go-dualrun'

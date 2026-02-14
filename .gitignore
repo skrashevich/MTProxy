@@ -1,3 +1,4 @@
 objs
 dep
 .DS_Store
+artifacts/

@@ -2,6 +2,7 @@ package cli_test
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net"
@@ -53,6 +54,17 @@ func TestDualRunControlPlaneSLO(t *testing.T) {
 			2*cRes.shutdownLatency+200*time.Millisecond,
 		)
 	}
+
+	writeDualRunReportEntry(t, dualRunReportEntry{
+		Name: "control_plane_slo",
+		Thresholds: map[string]string{
+			"shutdown": "go <= c*2 + 200ms",
+		},
+		Metrics: map[string]any{
+			"go_shutdown_ms": durationToMillis(goRes.shutdownLatency),
+			"c_shutdown_ms":  durationToMillis(cRes.shutdownLatency),
+		},
+	})
 }
 
 func TestDualRunDataplaneCanarySLO(t *testing.T) {
@@ -121,6 +133,136 @@ func TestDualRunDataplaneCanarySLO(t *testing.T) {
 			2*cRes.shutdownLatency+250*time.Millisecond,
 		)
 	}
+
+	writeDualRunReportEntry(t, dualRunReportEntry{
+		Name: "dataplane_canary_slo",
+		Thresholds: map[string]string{
+			"connect_success_rate": "go + 0.02 >= c",
+			"connect_p95":          "go <= c*2.0 + 25ms",
+			"connect_p99":          "go <= c*3.0 + 60ms",
+			"stats_success_rate":   "go + 0.02 >= c",
+			"stats_p95":            "go <= c*2.5 + 40ms",
+			"stats_p99":            "go <= c*3.5 + 100ms",
+			"shutdown":             "go <= c*2 + 250ms",
+		},
+		Metrics: map[string]any{
+			"go_connect":     metricSnapshot(goRes.connect),
+			"c_connect":      metricSnapshot(cRes.connect),
+			"go_stats":       metricSnapshot(goRes.stats),
+			"c_stats":        metricSnapshot(cRes.stats),
+			"go_shutdown_ms": durationToMillis(goRes.shutdownLatency),
+			"c_shutdown_ms":  durationToMillis(cRes.shutdownLatency),
+		},
+	})
+}
+
+func TestDualRunDataplaneLoadSLO(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("dual-run harness is enabled only on Linux")
+	}
+	if runtime.GOARCH != "amd64" {
+		t.Skip("dual-run harness currently requires amd64 (C build flags are x86-specific)")
+	}
+	if os.Getenv("MTPROXY_DUAL_RUN") != "1" {
+		t.Skip("set MTPROXY_DUAL_RUN=1 to run C vs Go dual-run harness")
+	}
+
+	goBin := testutil.BuildProxyBinary(t)
+	cBin := testutil.BuildCProxyBinary(t)
+
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "backend.conf")
+	if err := os.WriteFile(cfgPath, []byte("proxy 149.154.175.50:8888;"), 0o600); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+
+	goPort := findFreeLocalPort(t)
+	cPort := findFreeLocalPort(t)
+	profile := dataplaneLoadProfile()
+
+	goRes := runDataplaneCycle(
+		t,
+		goBin,
+		cfgPath,
+		filepath.Join(dir, "go-dataplane-load.log"),
+		"runtime initialized:",
+		goPort,
+		profile,
+	)
+	cRes := runDataplaneCycle(
+		t,
+		cBin,
+		cfgPath,
+		filepath.Join(dir, "c-dataplane-load.log"),
+		"",
+		cPort,
+		profile,
+	)
+
+	t.Logf(
+		"dual-run dataplane load (%s):\n"+
+			"  go_connect success=%.3f p95=%s p99=%s avg=%s\n"+
+			"  c_connect success=%.3f p95=%s p99=%s avg=%s\n"+
+			"  go_stats success=%.3f p95=%s p99=%s avg=%s\n"+
+			"  c_stats success=%.3f p95=%s p99=%s avg=%s\n"+
+			"  go_shutdown=%s c_shutdown=%s",
+		profile.name,
+		goRes.connect.successRate(), goRes.connect.p95Latency, goRes.connect.p99Latency, goRes.connect.avgLatency,
+		cRes.connect.successRate(), cRes.connect.p95Latency, cRes.connect.p99Latency, cRes.connect.avgLatency,
+		goRes.stats.successRate(), goRes.stats.p95Latency, goRes.stats.p99Latency, goRes.stats.avgLatency,
+		cRes.stats.successRate(), cRes.stats.p95Latency, cRes.stats.p99Latency, cRes.stats.avgLatency,
+		goRes.shutdownLatency, cRes.shutdownLatency,
+	)
+
+	assertDualRunCanarySLO(t, "load_connect", goRes.connect, cRes.connect, 0.02, 2.0, 25*time.Millisecond)
+	assertDualRunCanarySLO(t, "load_stats", goRes.stats, cRes.stats, 0.02, 2.5, 60*time.Millisecond)
+
+	if goRes.connect.p99Latency > time.Duration(float64(cRes.connect.p99Latency)*3.0)+80*time.Millisecond {
+		t.Fatalf(
+			"load connect p99 regression: go=%s c=%s threshold=%s",
+			goRes.connect.p99Latency,
+			cRes.connect.p99Latency,
+			time.Duration(float64(cRes.connect.p99Latency)*3.0)+80*time.Millisecond,
+		)
+	}
+	if goRes.stats.p99Latency > time.Duration(float64(cRes.stats.p99Latency)*4.0)+150*time.Millisecond {
+		t.Fatalf(
+			"load stats p99 regression: go=%s c=%s threshold=%s",
+			goRes.stats.p99Latency,
+			cRes.stats.p99Latency,
+			time.Duration(float64(cRes.stats.p99Latency)*4.0)+150*time.Millisecond,
+		)
+	}
+	if goRes.shutdownLatency > 2*cRes.shutdownLatency+300*time.Millisecond {
+		t.Fatalf(
+			"go shutdown latency regressed in dataplane load: go=%s c=%s threshold=%s",
+			goRes.shutdownLatency,
+			cRes.shutdownLatency,
+			2*cRes.shutdownLatency+300*time.Millisecond,
+		)
+	}
+
+	writeDualRunReportEntry(t, dualRunReportEntry{
+		Name: "dataplane_load_slo",
+		Thresholds: map[string]string{
+			"profile":              profile.name,
+			"connect_success_rate": "go + 0.02 >= c",
+			"connect_p95":          "go <= c*2.0 + 25ms",
+			"connect_p99":          "go <= c*3.0 + 80ms",
+			"stats_success_rate":   "go + 0.02 >= c",
+			"stats_p95":            "go <= c*2.5 + 60ms",
+			"stats_p99":            "go <= c*4.0 + 150ms",
+			"shutdown":             "go <= c*2 + 300ms",
+		},
+		Metrics: map[string]any{
+			"go_connect":     metricSnapshot(goRes.connect),
+			"c_connect":      metricSnapshot(cRes.connect),
+			"go_stats":       metricSnapshot(goRes.stats),
+			"c_stats":        metricSnapshot(cRes.stats),
+			"go_shutdown_ms": durationToMillis(goRes.shutdownLatency),
+			"c_shutdown_ms":  durationToMillis(cRes.shutdownLatency),
+		},
+	})
 }
 
 type controlPlaneResult struct {
@@ -128,13 +270,14 @@ type controlPlaneResult struct {
 }
 
 type canaryLatencyResult struct {
-	attempts    int
-	successes   int
-	failures    int
-	avgLatency  time.Duration
-	p50Latency  time.Duration
-	p95Latency  time.Duration
-	maxLatency  time.Duration
+	attempts   int
+	successes  int
+	failures   int
+	avgLatency time.Duration
+	p50Latency time.Duration
+	p95Latency time.Duration
+	p99Latency time.Duration
+	maxLatency time.Duration
 }
 
 func (r canaryLatencyResult) successRate() float64 {
@@ -148,6 +291,29 @@ type dataplaneCanaryResult struct {
 	connect         canaryLatencyResult
 	stats           canaryLatencyResult
 	shutdownLatency time.Duration
+}
+
+type dualRunDataplaneProfile struct {
+	name               string
+	connectAttempts    int
+	connectConcurrency int
+	connectTimeout     time.Duration
+	statsAttempts      int
+	statsConcurrency   int
+	statsTimeout       time.Duration
+}
+
+type dualRunReportEntry struct {
+	Name       string            `json:"name"`
+	Thresholds map[string]string `json:"thresholds,omitempty"`
+	Metrics    map[string]any    `json:"metrics,omitempty"`
+}
+
+type dualRunReportFile struct {
+	GeneratedAt string               `json:"generated_at"`
+	GoOS        string               `json:"go_os"`
+	GoArch      string               `json:"go_arch"`
+	Entries     []dualRunReportEntry `json:"entries"`
 }
 
 func runControlPlaneCycle(t *testing.T, bin, cfgPath, logPath, startupMarker string) controlPlaneResult {
@@ -236,6 +402,26 @@ func runDataplaneCanaryCycle(
 	startupMarker string,
 	port int,
 ) dataplaneCanaryResult {
+	return runDataplaneCycle(
+		t,
+		bin,
+		cfgPath,
+		logPath,
+		startupMarker,
+		port,
+		dataplaneCanaryProfile(),
+	)
+}
+
+func runDataplaneCycle(
+	t *testing.T,
+	bin string,
+	cfgPath string,
+	logPath string,
+	startupMarker string,
+	port int,
+	profile dualRunDataplaneProfile,
+) dataplaneCanaryResult {
 	t.Helper()
 
 	outputFile, err := os.OpenFile(logPath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
@@ -273,8 +459,8 @@ func runDataplaneCanaryCycle(
 	}
 
 	addr := fmt.Sprintf("127.0.0.1:%d", port)
-	connectRes := runDialCanary(addr, 160, 16, 450*time.Millisecond)
-	statsRes := runHTTPStatsCanary(port, 120, 12, 650*time.Millisecond)
+	connectRes := runDialCanary(addr, profile.connectAttempts, profile.connectConcurrency, profile.connectTimeout)
+	statsRes := runHTTPStatsCanary(port, profile.statsAttempts, profile.statsConcurrency, profile.statsTimeout)
 
 	start := time.Now()
 	if err := cmd.Process.Signal(syscall.SIGTERM); err != nil {
@@ -398,6 +584,7 @@ func runCanaryLatency(attempts int, concurrency int, op func() error) canaryLate
 	res.avgLatency = total / time.Duration(len(lats))
 	res.p50Latency = percentileDuration(lats, 50)
 	res.p95Latency = percentileDuration(lats, 95)
+	res.p99Latency = percentileDuration(lats, 99)
 	res.maxLatency = lats[len(lats)-1]
 	return res
 }
@@ -506,4 +693,91 @@ func isExpectedTerminateExit(bin string, err error) bool {
 		return code == 1 || code == 143
 	}
 	return false
+}
+
+func dataplaneCanaryProfile() dualRunDataplaneProfile {
+	return dualRunDataplaneProfile{
+		name:               "canary",
+		connectAttempts:    160,
+		connectConcurrency: 16,
+		connectTimeout:     450 * time.Millisecond,
+		statsAttempts:      120,
+		statsConcurrency:   12,
+		statsTimeout:       650 * time.Millisecond,
+	}
+}
+
+func dataplaneLoadProfile() dualRunDataplaneProfile {
+	return dualRunDataplaneProfile{
+		name:               "load",
+		connectAttempts:    420,
+		connectConcurrency: 32,
+		connectTimeout:     500 * time.Millisecond,
+		statsAttempts:      260,
+		statsConcurrency:   20,
+		statsTimeout:       900 * time.Millisecond,
+	}
+}
+
+func metricSnapshot(r canaryLatencyResult) map[string]any {
+	return map[string]any{
+		"attempts":     r.attempts,
+		"successes":    r.successes,
+		"failures":     r.failures,
+		"success_rate": r.successRate(),
+		"avg_ms":       durationToMillis(r.avgLatency),
+		"p50_ms":       durationToMillis(r.p50Latency),
+		"p95_ms":       durationToMillis(r.p95Latency),
+		"p99_ms":       durationToMillis(r.p99Latency),
+		"max_ms":       durationToMillis(r.maxLatency),
+	}
+}
+
+func durationToMillis(d time.Duration) float64 {
+	return float64(d) / float64(time.Millisecond)
+}
+
+func writeDualRunReportEntry(t *testing.T, entry dualRunReportEntry) {
+	t.Helper()
+	reportPath := os.Getenv("MTPROXY_DUAL_RUN_REPORT")
+	if reportPath == "" {
+		return
+	}
+
+	if err := os.MkdirAll(filepath.Dir(reportPath), 0o755); err != nil {
+		t.Fatalf("create dual-run report dir: %v", err)
+	}
+
+	report := dualRunReportFile{
+		GeneratedAt: time.Now().UTC().Format(time.RFC3339),
+		GoOS:        runtime.GOOS,
+		GoArch:      runtime.GOARCH,
+	}
+	if data, err := os.ReadFile(reportPath); err == nil && len(data) > 0 {
+		if err := json.Unmarshal(data, &report); err != nil {
+			t.Fatalf("parse dual-run report %s: %v", reportPath, err)
+		}
+		report.GeneratedAt = time.Now().UTC().Format(time.RFC3339)
+	}
+
+	updated := false
+	for i := range report.Entries {
+		if report.Entries[i].Name == entry.Name {
+			report.Entries[i] = entry
+			updated = true
+			break
+		}
+	}
+	if !updated {
+		report.Entries = append(report.Entries, entry)
+	}
+
+	encoded, err := json.MarshalIndent(report, "", "  ")
+	if err != nil {
+		t.Fatalf("marshal dual-run report: %v", err)
+	}
+	encoded = append(encoded, '\n')
+	if err := os.WriteFile(reportPath, encoded, 0o644); err != nil {
+		t.Fatalf("write dual-run report %s: %v", reportPath, err)
+	}
 }

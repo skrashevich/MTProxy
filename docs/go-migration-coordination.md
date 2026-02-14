@@ -143,9 +143,11 @@ This file tracks cross-agent integration status for the C -> Go migration.
 - Started Phase 7 dual-run rollout harness:
   - added Linux-only C-vs-Go control-plane comparison test `/Users/svk/Documents/Projects.nosync/MTProxy/integration/cli/dual_run_integration_test.go` (`TestDualRunControlPlaneSLO`), gated by `MTPROXY_DUAL_RUN=1`,
   - added Linux-only C-vs-Go dataplane canary comparison test `/Users/svk/Documents/Projects.nosync/MTProxy/integration/cli/dual_run_integration_test.go` (`TestDualRunDataplaneCanarySLO`) that measures listener connect canary and `/stats` request canary (`success-rate`, `p95`, `avg`) with explicit SLO guards against C baseline,
+  - added Linux-only C-vs-Go dataplane load comparison test `/Users/svk/Documents/Projects.nosync/MTProxy/integration/cli/dual_run_integration_test.go` (`TestDualRunDataplaneLoadSLO`) with higher concurrency/attempt profile and additional `p99` guards,
   - dual-run test currently requires `linux/amd64` (C build flags are x86-specific),
   - added C binary build helper `/Users/svk/Documents/Projects.nosync/MTProxy/integration/testutil/c_binary.go` (`BuildCProxyBinary`),
   - added `make go-dualrun` target to run dual-run harness reproducibly.
+  - added `make go-dualrun-report` target to produce machine-readable report (`MTPROXY_DUAL_RUN_REPORT`, JSON) and verbose test log artifact under `/Users/svk/Documents/Projects.nosync/MTProxy/artifacts/dualrun`.
   - added Phase 7 baseline artifact `/Users/svk/Documents/Projects.nosync/MTProxy/docs/go-phase7-dualrun-baseline.md` with reproducible command and measured canary metrics.
 - Added Docker-based Linux validation target:
   - `make go-linux-docker-check` runs `go-stability` and `go-dualrun` in a Linux container (`DOCKER_GO_IMAGE`, default `golang:bookworm`; optional `DOCKER_PLATFORM=linux/amd64` for full dual-run on ARM hosts).
@@ -189,7 +191,7 @@ This file tracks cross-agent integration status for the C -> Go migration.
 - Integration suite now includes burst traffic replay for ingress/outbound with stats-based stability assertions.
 - Integration suite now includes soak/load guard checks for FD and RSS growth deltas in a real runtime process.
 - CI now includes runtime-loop smoke: waits for runtime init, sends `SIGUSR1` (log reopen), then `SIGTERM`, and asserts clean exit.
-- Go CI workflow (`/Users/svk/Documents/Projects.nosync/MTProxy/.github/workflows/go-build-and-smoke.yml`) now runs `make go-smoke`, `make go-stability`, and Linux-only `make go-dualrun`.
+- Go CI workflow (`/Users/svk/Documents/Projects.nosync/MTProxy/.github/workflows/go-build-and-smoke.yml`) now runs `make go-smoke`, `make go-stability`, and Linux-only `make go-dualrun-report` with uploaded dual-run artifacts (`artifacts/dualrun`).
 - CI/make smoke now also validates supervisor smoke path (`-M 2`) with graceful `SIGTERM`.
 - CI/make supervisor smoke now also sends `SIGUSR1` and verifies parent log reopen marker.
 - `go test ./...` passes with Phase 5 dataplane/ingress/outbound/runtime tests enabled.
