@@ -38,9 +38,10 @@ npid_t PID;
 
 void init_common_PID (void) {
   if (!PID.pid) {
-    int p = getpid ();
-    assert (!(p & 0xffff0000));
-    PID.pid = p;
+    unsigned p = (unsigned) getpid ();
+    /* process_id keeps pid in 16 bits; fold wider OS pids deterministically */
+    unsigned short pid16 = (unsigned short) ((p & 0xffffu) ^ (p >> 16));
+    PID.pid = pid16 ? pid16 : 1;
   }
   if (!PID.utime) {
     PID.utime = time (0);
@@ -84,4 +85,3 @@ int process_id_is_newer (struct process_id *a, struct process_id *b) {
   if (x && x <= 0x3fff) { return 1; }
   return 0;
 }
-

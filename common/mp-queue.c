@@ -31,8 +31,9 @@
 #include <string.h>
 #include <time.h>
 #include <unistd.h>
+#include <sched.h>
 
-#if !defined(__APPLE__)
+#if !MPQ_USE_POSIX_SEMAPHORES && !defined(__APPLE__)
 #include <linux/futex.h>
 #include <sys/syscall.h>
 #endif
@@ -120,16 +121,35 @@ int get_this_thread_id (void) {
 
 /* custom semaphore implementation using futexes */
 
-#if !defined(__APPLE__)
 int mp_sem_post (mp_sem_t *sem) {
   __sync_fetch_and_add (&sem->value, 1);
+#if !defined(__APPLE__)
   if (sem->waiting > 0) {
     syscall (__NR_futex, &sem->value, FUTEX_WAKE, 1, NULL, 0, 0);
   }
+#endif
   return 0;
 }
 
 int mp_sem_wait (mp_sem_t *sem) {
+#if defined(__APPLE__)
+  int spins = 0;
+  while (1) {
+    int v = sem->value;
+    if (v > 0) {
+      v = __sync_fetch_and_add (&sem->value, -1);
+      if (v > 0) {
+        return 0;
+      }
+      __sync_add_and_fetch (&sem->value, 1);
+    }
+    if ((++spins & 0xff) == 0) {
+      usleep (1000);
+    } else {
+      sched_yield ();
+    }
+  }
+#else
   int v = sem->value, q = 0;
   while (1) {
     if (v > 0) {
@@ -151,6 +171,7 @@ int mp_sem_wait (mp_sem_t *sem) {
       q = 0;
     }
   }
+#endif
 }
 
 int mp_sem_trywait (mp_sem_t *sem) {
@@ -164,7 +185,6 @@ int mp_sem_trywait (mp_sem_t *sem) {
   }
   return -1;
 }
-#endif
 
 /* functions for one mp_queue_block */
 
