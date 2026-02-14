@@ -156,6 +156,8 @@ This file tracks cross-agent integration status for the C -> Go migration.
   - added automated drill test `/Users/svk/Documents/Projects.nosync/MTProxy/integration/cli/phase8_cutover_integration_test.go` (`TestPhase8CutoverRollbackDrill`) executing `C -> Go -> C` switchover on one runtime profile with startup/shutdown envelope guards,
   - added make target `go-phase8-drill` producing artifacts under `/Users/svk/Documents/Projects.nosync/MTProxy/artifacts/phase8`,
   - added formal Phase 8 acceptance artifact `/Users/svk/Documents/Projects.nosync/MTProxy/docs/go-phase8-acceptance-report.md`; Gate 5 (`cutover and rollback procedures are validated`) is marked `PASS` in drill scope.
+- Added functional coverage artifact:
+  - `/Users/svk/Documents/Projects.nosync/MTProxy/docs/go-functional-coverage-report.md` documenting C->Go subsystem coverage matrix with test/artifact evidence; Gate 4 (`functional coverage is documented`) is marked `PASS` in branch scope.
 - Added Docker-based Linux validation target:
   - `make go-linux-docker-check` runs `go-stability`, `go-dualrun`, and `go-phase8-drill` in a Linux container (`DOCKER_GO_IMAGE`, default `golang:bookworm`; optional `DOCKER_PLATFORM=linux/amd64` for full dual-run on ARM hosts).
 
