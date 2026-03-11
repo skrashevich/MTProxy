@@ -1,3 +1,7 @@
 objs
 dep
 .DS_Store
+.opencode
+mtproto-proxy
+proxy-multi.conf
+proxy-secret
