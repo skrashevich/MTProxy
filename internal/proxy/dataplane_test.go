@@ -48,7 +48,7 @@ func makeIncomingDP(data []byte, dc int16) IncomingPacket {
 
 func TestDataPlane_HandlePacket_TooShort(t *testing.T) {
 	dp := makeTestDP(nil)
-	err := dp.HandlePacket(makeIncomingDP([]byte{1, 2, 3}, 2))
+	_, err := dp.HandlePacket(makeIncomingDP([]byte{1, 2, 3}, 2))
 	if err == nil {
 		t.Error("expected error for too-short packet")
 	}
@@ -56,7 +56,7 @@ func TestDataPlane_HandlePacket_TooShort(t *testing.T) {
 
 func TestDataPlane_HandlePacket_UnalignedSize(t *testing.T) {
 	dp := makeTestDP(nil)
-	err := dp.HandlePacket(makeIncomingDP(make([]byte, 29), 2))
+	_, err := dp.HandlePacket(makeIncomingDP(make([]byte, 29), 2))
 	if err == nil {
 		t.Error("expected error for unaligned packet")
 	}
@@ -67,7 +67,7 @@ func TestDataPlane_HandlePacket_BadDHFunction(t *testing.T) {
 	buf := make([]byte, 48)
 	binary.LittleEndian.PutUint32(buf[16:20], 28)
 	binary.LittleEndian.PutUint32(buf[20:24], 0x0EADBEEF)
-	err := dp.HandlePacket(makeIncomingDP(buf, 2))
+	_, err := dp.HandlePacket(makeIncomingDP(buf, 2))
 	if err == nil {
 		t.Error("expected error for unknown DH function")
 	}
@@ -77,7 +77,7 @@ func TestDataPlane_DroppedOnShort(t *testing.T) {
 	out := NewOutboundProxy(OutboundConfig{})
 	stats := NewStats()
 	dp := NewDataPlane(makeTestRouterDP(), out, stats, nil)
-	dp.HandlePacket(makeIncomingDP([]byte{1, 2}, 2))
+	dp.HandlePacket(makeIncomingDP([]byte{1, 2}, 2)) //nolint:errcheck
 	if stats.DroppedQueries != 1 {
 		t.Errorf("DroppedQueries = %d, want 1", stats.DroppedQueries)
 	}
@@ -85,7 +85,7 @@ func TestDataPlane_DroppedOnShort(t *testing.T) {
 
 func TestDataPlane_DHPacketPassesValidation(t *testing.T) {
 	dp := makeTestDP(nil)
-	err := dp.HandlePacket(makeIncomingDP(makeDHPacketDP(), 2))
+	_, err := dp.HandlePacket(makeIncomingDP(makeDHPacketDP(), 2))
 	// DH пакет валиден — ошибка может быть только про connect к несуществующему серверу
 	if err != nil {
 		if err.Error() == "dataplane: invalid DH packet: unknown DH function: 0x60469778" {

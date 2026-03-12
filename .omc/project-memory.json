@@ -191,10 +191,52 @@
   },
   "hotPaths": [
     {
-      "path": "mtproto/mtproto-proxy.c",
-      "accessCount": 13,
-      "lastAccessed": 1773263228978,
+      "path": "",
+      "accessCount": 21,
+      "lastAccessed": 1773297559767,
       "type": "directory"
+    },
+    {
+      "path": "net/net-crypto-aes.c",
+      "accessCount": 17,
+      "lastAccessed": 1773297881143,
+      "type": "file"
+    },
+    {
+      "path": "mtproto/mtproto-proxy.c",
+      "accessCount": 15,
+      "lastAccessed": 1773294888578,
+      "type": "directory"
+    },
+    {
+      "path": "internal/crypto/aes.go",
+      "accessCount": 14,
+      "lastAccessed": 1773301009545,
+      "type": "file"
+    },
+    {
+      "path": "net/net-tcp-rpc-client.c",
+      "accessCount": 11,
+      "lastAccessed": 1773297998062,
+      "type": "file"
+    },
+    {
+      "path": "internal/cli/options.go",
+      "accessCount": 11,
+      "lastAccessed": 1773301431612,
+      "type": "file"
+    },
+    {
+      "path": "net",
+      "accessCount": 9,
+      "lastAccessed": 1773297999473,
+      "type": "directory"
+    },
+    {
+      "path": "internal/proxy/client_transport.go",
+      "accessCount": 8,
+      "lastAccessed": 1773301153304,
+      "type": "file"
     },
     {
       "path": "common/server-functions.c",
@@ -209,21 +251,15 @@
       "type": "file"
     },
     {
-      "path": "",
+      "path": "internal/protocol/constants.go",
       "accessCount": 5,
-      "lastAccessed": 1773263219258,
-      "type": "directory"
-    },
-    {
-      "path": "internal/crypto/aes.go",
-      "accessCount": 5,
-      "lastAccessed": 1773263385943,
+      "lastAccessed": 1773301006032,
       "type": "file"
     },
     {
-      "path": "internal/proxy/client_transport.go",
+      "path": "go.mod",
       "accessCount": 5,
-      "lastAccessed": 1773264280377,
+      "lastAccessed": 1773301026506,
       "type": "file"
     },
     {
@@ -233,15 +269,21 @@
       "type": "file"
     },
     {
-      "path": "internal/protocol/constants.go",
+      "path": "net/net-crypto-aes.h",
       "accessCount": 4,
-      "lastAccessed": 1773263229205,
+      "lastAccessed": 1773297843135,
       "type": "file"
     },
     {
-      "path": "go.mod",
+      "path": "internal/proxy/ingress.go",
       "accessCount": 4,
-      "lastAccessed": 1773263244590,
+      "lastAccessed": 1773301155113,
+      "type": "file"
+    },
+    {
+      "path": "internal/protocol/frames.go",
+      "accessCount": 4,
+      "lastAccessed": 1773301191991,
       "type": "file"
     },
     {
@@ -257,39 +299,45 @@
       "type": "file"
     },
     {
+      "path": "net/net-tcp-rpc-common.h",
+      "accessCount": 3,
+      "lastAccessed": 1773295987187,
+      "type": "file"
+    },
+    {
+      "path": "internal/config/config.go",
+      "accessCount": 3,
+      "lastAccessed": 1773300990731,
+      "type": "file"
+    },
+    {
+      "path": "internal/config/manager.go",
+      "accessCount": 3,
+      "lastAccessed": 1773300991280,
+      "type": "file"
+    },
+    {
       "path": "net/net-crypto-dh.c",
       "accessCount": 2,
       "lastAccessed": 1773263175691,
       "type": "file"
     },
     {
-      "path": "net/net-crypto-aes.c",
+      "path": "common/pid.c",
       "accessCount": 2,
-      "lastAccessed": 1773263195705,
+      "lastAccessed": 1773295880112,
       "type": "file"
     },
     {
-      "path": "internal/protocol/frames.go",
+      "path": "internal/protocol/mtproto.go",
       "accessCount": 2,
-      "lastAccessed": 1773263236681,
+      "lastAccessed": 1773301007089,
       "type": "file"
     },
     {
-      "path": "internal/config/config.go",
+      "path": "internal/protocol/state.go",
       "accessCount": 2,
-      "lastAccessed": 1773263252005,
-      "type": "file"
-    },
-    {
-      "path": "internal/proxy/ingress.go",
-      "accessCount": 2,
-      "lastAccessed": 1773263252510,
-      "type": "file"
-    },
-    {
-      "path": "internal/config/manager.go",
-      "accessCount": 2,
-      "lastAccessed": 1773263252582,
+      "lastAccessed": 1773301007835,
       "type": "file"
     },
     {
@@ -347,12 +395,6 @@
       "type": "file"
     },
     {
-      "path": "net/net-crypto-aes.h",
-      "accessCount": 1,
-      "lastAccessed": 1773263096028,
-      "type": "file"
-    },
-    {
       "path": "net/net-crypto-dh.h",
       "accessCount": 1,
       "lastAccessed": 1773263097002,
@@ -401,12 +443,6 @@
       "type": "file"
     },
     {
-      "path": "common/pid.c",
-      "accessCount": 1,
-      "lastAccessed": 1773263139906,
-      "type": "file"
-    },
-    {
       "path": "engine/engine-signals.c",
       "accessCount": 1,
       "lastAccessed": 1773263146012,
@@ -419,28 +455,10 @@
       "type": "file"
     },
     {
-      "path": "net/net-tcp-rpc-client.c",
-      "accessCount": 1,
-      "lastAccessed": 1773263175420,
-      "type": "file"
-    },
-    {
-      "path": "net",
-      "accessCount": 1,
-      "lastAccessed": 1773263177208,
-      "type": "directory"
-    },
-    {
       "path": "net/net-config.c",
       "accessCount": 1,
       "lastAccessed": 1773263189572,
       "type": "directory"
-    },
-    {
-      "path": "net/net-tcp-rpc-common.h",
-      "accessCount": 1,
-      "lastAccessed": 1773263196467,
-      "type": "file"
     },
     {
       "path": "net/net-thread.c",
@@ -470,24 +488,6 @@
       "path": "internal/crypto/dh.go",
       "accessCount": 1,
       "lastAccessed": 1773263240967,
-      "type": "file"
-    },
-    {
-      "path": "internal/protocol/mtproto.go",
-      "accessCount": 1,
-      "lastAccessed": 1773263247855,
-      "type": "file"
-    },
-    {
-      "path": "internal/protocol/state.go",
-      "accessCount": 1,
-      "lastAccessed": 1773263267011,
-      "type": "file"
-    },
-    {
-      "path": "internal/cli/options.go",
-      "accessCount": 1,
-      "lastAccessed": 1773263267548,
       "type": "file"
     }
   ],

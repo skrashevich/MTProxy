@@ -63,6 +63,10 @@ type Options struct {
 	// --mtproto-secret-file — path to file with secrets.
 	SecretFile string
 
+	// --nat-info — NAT translation rules: local_ip:public_ip.
+	// Maps local (private) IPs to public IPs for key derivation.
+	NatInfo map[string]string
+
 	// Positional argument: path to proxy-multi.conf.
 	ConfigFile string
 }
@@ -185,6 +189,10 @@ func Parse() *Options {
 	fs.Float64Var(&opts.PingInterval, "T", 5.0, "ping interval in seconds")
 	fs.Float64Var(&opts.PingInterval, "ping-interval", 5.0, "ping interval in seconds")
 
+	// --nat-info (repeatable)
+	nf := &natInfoFlag{info: &opts.NatInfo}
+	fs.Var(nf, "nat-info", "NAT translation rule: local_ip:public_ip (may be repeated)")
+
 	if err := fs.Parse(os.Args[1:]); err != nil {
 		if err == flag.ErrHelp {
 			os.Exit(0)
@@ -240,6 +248,24 @@ func decodeHexSecret(flag, value string, wantBytes int) ([]byte, error) {
 		return nil, fmt.Errorf("%s: invalid hex %q: %w", flag, value, err)
 	}
 	return b, nil
+}
+
+// natInfoFlag accumulates --nat-info local_ip:public_ip values.
+type natInfoFlag struct {
+	info *map[string]string
+}
+
+func (n *natInfoFlag) String() string { return "" }
+func (n *natInfoFlag) Set(v string) error {
+	parts := strings.SplitN(v, ":", 2)
+	if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
+		return fmt.Errorf("--nat-info: expected local_ip:public_ip, got %q", v)
+	}
+	if *n.info == nil {
+		*n.info = make(map[string]string)
+	}
+	(*n.info)[parts[0]] = parts[1]
+	return nil
 }
 
 // loadSecretsFromFile reads secrets from a file (comma or whitespace separated).

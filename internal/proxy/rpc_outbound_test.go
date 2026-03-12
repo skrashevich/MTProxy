@@ -67,7 +67,7 @@ func TestRPCFrameRoundtrip(t *testing.T) {
 	defer serverConn.Close()
 	defer clientConn.Close()
 
-	c := newRPCOutboundConn("pipe", nil, false)
+	c := newRPCOutboundConn("pipe", nil, false, nil)
 	c.conn = clientConn
 
 	payload := []byte{0xaa, 0x87, 0xcb, 0x7a, 0x01, 0x00, 0x00, 0x00} // RPC_NONCE-like
@@ -103,7 +103,7 @@ func TestRPCFrameRoundtrip(t *testing.T) {
 
 // TestHandleFrameDispatch verifies that handleFrame routes opcodes correctly.
 func TestHandleFrameDispatch(t *testing.T) {
-	c := newRPCOutboundConn("test", nil, false)
+	c := newRPCOutboundConn("test", nil, false, nil)
 
 	connID := int64(-0x2152410DEDCBA988) // == 0xDEADBEEF12345678 as int64
 	respCh := make(chan ProxyResponse, 1)
@@ -133,7 +133,7 @@ func TestHandleFrameDispatch(t *testing.T) {
 
 // TestHandleSimpleAck verifies RPC_SIMPLE_ACK dispatch.
 func TestHandleSimpleAck(t *testing.T) {
-	c := newRPCOutboundConn("test", nil, false)
+	c := newRPCOutboundConn("test", nil, false, nil)
 
 	connID := int64(int64(0x1122334455667788 - 1<<63) - (0 - 1<<63)) // safe signed literal
 	respCh := make(chan ProxyResponse, 1)
@@ -159,7 +159,7 @@ func TestHandleSimpleAck(t *testing.T) {
 
 // TestHandleCloseExt verifies RPC_CLOSE_EXT dispatch.
 func TestHandleCloseExt(t *testing.T) {
-	c := newRPCOutboundConn("test", nil, false)
+	c := newRPCOutboundConn("test", nil, false, nil)
 
 	connID := int64(-6066930261531574460) // 0xABCDEF0011223344
 	respCh := make(chan ProxyResponse, 1)
@@ -188,10 +188,9 @@ func TestSendProxyRequest(t *testing.T) {
 	defer serverConn.Close()
 	defer clientConn.Close()
 
-	c := newRPCOutboundConn("pipe", nil, false)
+	c := newRPCOutboundConn("pipe", nil, false, nil)
 	c.conn = clientConn
-	// No encryption for this test
-	c.encryptor = nil
+	// No encryption for this test — CBC fields left nil
 
 	// Override writeEncryptedFrame to use writeRawFrame for testing
 	// We'll manually call writeRawFrame to check raw frame bytes instead.
@@ -211,10 +210,7 @@ func TestSendProxyRequest(t *testing.T) {
 
 	errCh := make(chan error, 1)
 	go func() {
-		// Temporarily patch encryptor to nil-safe variant
-		c2 := *c
-		c2.encryptor = nil
-		errCh <- c2.writeRawFrame(buildProxyReqPayload(
+		errCh <- c.writeRawFrame(buildProxyReqPayload(
 			protocol.FlagExtNode|protocol.FlagProxyTag,
 			connID, remoteIP, 1234, ourIP, 443,
 			tag, mtData,

@@ -3,13 +3,15 @@ package proxy
 import (
 	"fmt"
 	"sync"
+	"time"
 )
 
 // OutboundConfig holds configuration for the outbound proxy pool.
 type OutboundConfig struct {
-	Secret   []byte // AES/DH shared secret (proxy password)
-	ProxyTag []byte // 16-byte proxy tag, or nil
-	ForceDH  bool   // require DH key exchange
+	Secret   []byte            // AES/DH shared secret (proxy password)
+	ProxyTag []byte            // 16-byte proxy tag, or nil
+	ForceDH  bool              // require DH key exchange
+	NatInfo  map[uint32]uint32 // local IPv4 → public IPv4 (for key derivation behind NAT)
 }
 
 // OutboundProxy manages a pool of RPC connections to Telegram DC servers.
@@ -65,6 +67,9 @@ func (p *OutboundProxy) ForwardPacket(target string, req []byte) ([]byte, error)
 		return resp.Data, nil
 	case <-conn.closed:
 		return nil, fmt.Errorf("outbound: connection to %s closed", target)
+	case <-time.After(30 * time.Second):
+		conn.UnregisterPending(extConnID)
+		return nil, fmt.Errorf("outbound: timeout waiting for response from %s", target)
 	}
 }
 
@@ -99,7 +104,7 @@ func (p *OutboundProxy) reconnect(addr string) (*rpcOutboundConn, error) {
 		return conn, nil
 	}
 
-	conn := newRPCOutboundConn(addr, p.cfg.Secret, p.cfg.ForceDH)
+	conn := newRPCOutboundConn(addr, p.cfg.Secret, p.cfg.ForceDH, p.cfg.NatInfo)
 	if err := conn.Connect(); err != nil {
 		return nil, fmt.Errorf("connect to %s: %w", addr, err)
 	}

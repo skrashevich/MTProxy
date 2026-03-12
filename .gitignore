@@ -5,3 +5,6 @@ dep
 mtproto-proxy
 proxy-multi.conf
 proxy-secret
+
+mtproto-proxy
+mtproto-proxy-go

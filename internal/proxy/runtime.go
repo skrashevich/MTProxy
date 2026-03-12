@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"log"
-	"net"
 	"os"
 	"os/signal"
 	"syscall"
@@ -43,9 +42,9 @@ type Runtime struct {
 	ProxyTag []byte
 
 	// Внутренние компоненты
-	configMgr   *config.Manager
-	ingress     *IngressServer
-	httpStats   *HTTPStatsServer
+	configMgr      *config.Manager
+	clientIngress  *ClientIngressServer
+	httpStats      *HTTPStatsServer
 	hotReloader *HotReloader
 	rateLimiter *RateLimiter
 	shutdown    *GracefulShutdown
@@ -82,7 +81,7 @@ func (rt *Runtime) Start(ctx context.Context) error {
 		return fmt.Errorf("runtime start: %w", err)
 	}
 
-	rt.ingress = NewIngressServer(rt.opts.ListenAddr, rt.handleClient)
+	rt.clientIngress = NewClientIngressServer(rt.opts.ListenAddr, rt.Secrets, rt.DataPlane, rt.shutdown)
 	log.Printf("runtime: listening on %s", rt.opts.ListenAddr)
 
 	sigCh := make(chan os.Signal, 1)
@@ -96,7 +95,7 @@ func (rt *Runtime) Start(ctx context.Context) error {
 		}
 	}()
 
-	if err := rt.ingress.ListenAndServe(ctx); err != nil {
+	if err := rt.clientIngress.ListenAndServe(ctx); err != nil {
 		return fmt.Errorf("runtime: ingress: %w", err)
 	}
 	return nil
@@ -122,14 +121,3 @@ func (rt *Runtime) Shutdown() {
 	log.Println("runtime: shutdown complete")
 }
 
-// handleClient вызывается для каждого нового TCP-соединения.
-func (rt *Runtime) handleClient(conn net.Conn) {
-	rt.shutdown.Track(conn)
-	defer rt.shutdown.Untrack(conn)
-	defer conn.Close()
-
-	rt.Stats.IncActiveConnections()
-	defer rt.Stats.DecActiveConnections()
-
-	log.Printf("runtime: new connection from %s", conn.RemoteAddr())
-}

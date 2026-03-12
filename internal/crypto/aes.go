@@ -19,6 +19,7 @@ type AESKeyData struct {
 }
 
 // AESState holds AES-256-CTR cipher state for a connection direction.
+// Used for client-facing obfuscated2 connections (ext-server).
 type AESState struct {
 	stream cipher.Stream
 }
@@ -43,6 +44,48 @@ func (s *AESState) Encrypt(dst, src []byte) {
 // Decrypt is an alias for Encrypt in CTR mode (XOR is self-inverse).
 func (s *AESState) Decrypt(dst, src []byte) {
 	s.stream.XORKeyStream(dst, src)
+}
+
+// AESCBCEncryptor handles streaming AES-256-CBC encryption for outbound RPC connections.
+// Matches C: aes_crypto_init with EVP_aes_256_cbc(), padding disabled.
+// The IV chains across CryptBlocks calls (cipher.CBCEncrypter maintains state).
+type AESCBCEncryptor struct {
+	enc cipher.BlockMode
+}
+
+// NewAESCBCEncryptor creates a new AES-256-CBC encryptor.
+// Matches C: evp_cipher_ctx_init(EVP_aes_256_cbc(), write_key, write_iv, 1).
+func NewAESCBCEncryptor(key [32]byte, iv [16]byte) (*AESCBCEncryptor, error) {
+	block, err := aes.NewCipher(key[:])
+	if err != nil {
+		return nil, fmt.Errorf("aes.NewCipher: %w", err)
+	}
+	return &AESCBCEncryptor{enc: cipher.NewCBCEncrypter(block, iv[:])}, nil
+}
+
+// Encrypt encrypts src into dst. len(src) MUST be a multiple of 16.
+func (e *AESCBCEncryptor) Encrypt(dst, src []byte) {
+	e.enc.CryptBlocks(dst, src)
+}
+
+// AESCBCDecryptor handles streaming AES-256-CBC decryption for outbound RPC connections.
+// Matches C: evp_cipher_ctx_init(EVP_aes_256_cbc(), read_key, read_iv, 0).
+type AESCBCDecryptor struct {
+	dec cipher.BlockMode
+}
+
+// NewAESCBCDecryptor creates a new AES-256-CBC decryptor.
+func NewAESCBCDecryptor(key [32]byte, iv [16]byte) (*AESCBCDecryptor, error) {
+	block, err := aes.NewCipher(key[:])
+	if err != nil {
+		return nil, fmt.Errorf("aes.NewCipher: %w", err)
+	}
+	return &AESCBCDecryptor{dec: cipher.NewCBCDecrypter(block, iv[:])}, nil
+}
+
+// Decrypt decrypts src into dst. len(src) MUST be a multiple of 16.
+func (d *AESCBCDecryptor) Decrypt(dst, src []byte) {
+	d.dec.CryptBlocks(dst, src)
 }
 
 // AESCreateKeys derives AES keys from the MTProxy handshake parameters.

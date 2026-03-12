@@ -2,6 +2,7 @@ package crypto
 
 import (
 	"bytes"
+	"fmt"
 	"testing"
 )
 
@@ -140,6 +141,53 @@ func TestAESCreateKeys_ClientServerSymmetry(t *testing.T) {
 	}
 	if serverKeys.WriteIV != clientKeys.ReadIV {
 		t.Errorf("server WriteIV != client ReadIV")
+	}
+}
+
+// TestAESCreateKeys_CrossCheckWithC verifies key derivation output matches
+// the C aes_create_keys() function for known inputs, computed independently via Python.
+func TestAESCreateKeys_CrossCheckWithC(t *testing.T) {
+	var nonceServer, nonceClient [16]byte
+	var serverIPv6, clientIPv6 [16]byte
+	for i := range nonceServer {
+		nonceServer[i] = byte(i + 1)
+		nonceClient[i] = byte(i + 17)
+	}
+	secret := make([]byte, 32)
+	for i := range secret {
+		secret[i] = byte(i + 50)
+	}
+
+	keys, err := AESCreateKeys(true, nonceServer, nonceClient, 111111111,
+		0x0a0b0c0d, 8888, serverIPv6,
+		0x01020304, 54321, clientIPv6,
+		secret, nil)
+	if err != nil {
+		t.Fatalf("AESCreateKeys: %v", err)
+	}
+
+	// Expected values computed independently via Python using the same algorithm as C.
+	wantWriteKey := "5e2b18c1686ba15dbef089946e1b53ef595a207a9fbe0c2d458b66aed1cd2e94"
+	wantWriteIV := "9818b2868ae2279d21f962b2b85522cd"
+	wantReadKey := "dc92f293c1e373295815daaacf7ded33d20531fb2ab429c71b1042e1b380fd3b"
+	wantReadIV := "c4517a154f71b4b9f700ff9eada6870d"
+
+	gotWriteKey := fmt.Sprintf("%x", keys.WriteKey)
+	gotWriteIV := fmt.Sprintf("%x", keys.WriteIV)
+	gotReadKey := fmt.Sprintf("%x", keys.ReadKey)
+	gotReadIV := fmt.Sprintf("%x", keys.ReadIV)
+
+	if gotWriteKey != wantWriteKey {
+		t.Errorf("WriteKey mismatch:\n  got  %s\n  want %s", gotWriteKey, wantWriteKey)
+	}
+	if gotWriteIV != wantWriteIV {
+		t.Errorf("WriteIV mismatch:\n  got  %s\n  want %s", gotWriteIV, wantWriteIV)
+	}
+	if gotReadKey != wantReadKey {
+		t.Errorf("ReadKey mismatch:\n  got  %s\n  want %s", gotReadKey, wantReadKey)
+	}
+	if gotReadIV != wantReadIV {
+		t.Errorf("ReadIV mismatch:\n  got  %s\n  want %s", gotReadIV, wantReadIV)
 	}
 }
 

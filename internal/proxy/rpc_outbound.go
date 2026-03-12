@@ -9,8 +9,10 @@ import (
 	"fmt"
 	"hash/crc32"
 	"io"
+	"log"
 	"math/big"
 	"net"
+	"os"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -73,13 +75,16 @@ type rpcOutboundConn struct {
 	addr   string
 	secret []byte // AES secret (proxy password)
 
-	conn      net.Conn
-	writeMu   sync.Mutex
-	outSeqno  int32 // atomic
+	conn     net.Conn
+	writeMu  sync.Mutex
+	outSeqno int32 // atomic; starts at -2 per C protocol
 
-	// AES encrypt/decrypt state (set after handshake)
-	encryptor *crypto.AESState
-	decryptor *crypto.AESState
+	// AES-256-CBC encrypt/decrypt state (set after handshake).
+	// RPC client connections use CBC (not CTR). CTR is only for client-facing ext-server.
+	// Matches C: aes_crypto_init → EVP_aes_256_cbc().
+	cbcEnc    *crypto.AESCBCEncryptor
+	cbcDec    *crypto.AESCBCDecryptor
+	cbcReader *cbcDecryptReader // wraps conn with transparent CBC decryption
 
 	// pending response channels keyed by ext_conn_id
 	pendingMu sync.Mutex
@@ -90,17 +95,24 @@ type rpcOutboundConn struct {
 
 	// forceDH requests DH handshake (--force-dh flag)
 	forceDH bool
+
+	// natInfo maps local IPv4 → public IPv4 for NAT traversal in key derivation
+	natInfo map[uint32]uint32
 }
 
 // newRPCOutboundConn creates a new unconnected outbound RPC connection.
-func newRPCOutboundConn(addr string, secret []byte, forceDH bool) *rpcOutboundConn {
-	return &rpcOutboundConn{
+func newRPCOutboundConn(addr string, secret []byte, forceDH bool, natInfo map[uint32]uint32) *rpcOutboundConn {
+	c := &rpcOutboundConn{
 		addr:    addr,
 		secret:  secret,
 		forceDH: forceDH,
+		natInfo: natInfo,
 		pending: make(map[int64]chan<- ProxyResponse),
 		closed:  make(chan struct{}),
 	}
+	// C protocol: out_packet_num starts at -2 (tcp_rpcc_connected, line 455)
+	atomic.StoreInt32(&c.outSeqno, -2)
+	return c
 }
 
 // Connect dials the target, performs the RPC handshake, and starts the read loop.
@@ -137,12 +149,12 @@ func (c *rpcOutboundConn) Close() {
 //
 // Protocol (from tcp_rpcc_init_crypto and tcp_rpcc_process_nonce_packet in C):
 //   Client sends:  RPC_NONCE packet (type=0x7acb87aa, key_select, crypto_schema, ts, nonce[16])
-//                  + optional DH g_a[256]
-//   Server sends:  RPC_NONCE packet back (same structure, with server nonce)
-//                  + optional DH g_b[256]
-//   Client sends:  RPC_HANDSHAKE packet
-//   Server sends:  RPC_HANDSHAKE packet
-//   → connection is now encrypted with derived AES keys
+//                  + optional DH g_a[256]           — UNENCRYPTED (seqno -2)
+//   Server sends:  RPC_NONCE packet back             — UNENCRYPTED (seqno -2)
+//   Both sides derive AES-256-CBC keys from nonces + secret + IPs/ports.
+//   Client sends:  RPC_HANDSHAKE packet              — ENCRYPTED with CBC (seqno -1)
+//   Server sends:  RPC_HANDSHAKE packet              — ENCRYPTED with CBC (seqno -1)
+//   → connection is now fully encrypted with AES-256-CBC
 func (c *rpcOutboundConn) handshake() error {
 	var clientNonce [16]byte
 	if _, err := rand.Read(clientNonce[:]); err != nil {
@@ -151,7 +163,7 @@ func (c *rpcOutboundConn) handshake() error {
 
 	nonceTSSec := uint32(time.Now().Unix())
 
-	// --- send RPC_NONCE ---
+	// --- send RPC_NONCE (unencrypted) ---
 	var dhPriv [256]byte
 	var dhPub [256]byte // g^a mod p
 
@@ -168,18 +180,15 @@ func (c *rpcOutboundConn) handshake() error {
 		}
 	}
 
-	// --- read server RPC_NONCE ---
+	// --- read server RPC_NONCE (unencrypted) ---
 	pktLen, pktData, err := c.readRawFrame()
 	if err != nil {
 		return fmt.Errorf("read nonce response: %w", err)
 	}
-	if pktLen < 36 {
+	if pktLen < 32 {
 		return fmt.Errorf("nonce packet too short: %d", pktLen)
 	}
 
-	// seqno is at offset 4, type is at offset 8 inside payload
-	// Frame layout after stripping outer len+seqno: [type][key_select][crypto_schema][crypto_ts][nonce[16]]...
-	// pktData here is the payload bytes (after len+seqno stripped)
 	pktType := int32(binary.LittleEndian.Uint32(pktData[0:4]))
 	if pktType != rpcNonce {
 		return fmt.Errorf("expected RPC_NONCE (0x%08x), got 0x%08x", rpcNonce, pktType)
@@ -206,9 +215,7 @@ func (c *rpcOutboundConn) handshake() error {
 		if len(pktData) < 32+4+8*4+4+256 {
 			return fmt.Errorf("DH nonce packet too short: %d", len(pktData))
 		}
-		// extra_keys_count at offset 32, then extra_key_select[8], then dh_params_select, g_b[256]
-		// Layout: [type(4)][key_select(4)][crypto_schema(4)][crypto_ts(4)][nonce(16)][extra_keys_count(4)][extra_key_select[8](32)][dh_params_select(4)][g_a(256)]
-		dhParamsBase := 32 + 4 + 8*4 // offset to dh_params_select
+		dhParamsBase := 32 + 4 + 8*4
 		serverDHParamsSelect := binary.LittleEndian.Uint32(pktData[dhParamsBase : dhParamsBase+4])
 		if serverDHParamsSelect != rpcDHParamsSelect {
 			return fmt.Errorf("DH params mismatch: got 0x%08x, expected 0x%08x", serverDHParamsSelect, rpcDHParamsSelect)
@@ -219,7 +226,6 @@ func (c *rpcOutboundConn) handshake() error {
 		}
 		gB := pktData[gBOffset : gBOffset+256]
 
-		// Compute shared secret: g^(ab) mod p
 		shared, err := dhThirdRound(gB, dhPriv[:])
 		if err != nil {
 			return fmt.Errorf("DH third round: %w", err)
@@ -229,13 +235,52 @@ func (c *rpcOutboundConn) handshake() error {
 		return fmt.Errorf("unsupported crypto schema: %d", cryptoSchema)
 	}
 
-	// --- send RPC_HANDSHAKE ---
+	// --- extract actual IPs/ports from the TCP connection ---
+	// C uses nat_translate_ip(c->remote_ip), c->remote_port, c->our_ip, c->our_port
+	// for key derivation. Both sides must use the same values.
+	serverIP, serverPort, serverIPv6 := extractConnAddr(c.conn.RemoteAddr())
+	clientIP, clientPort, clientIPv6 := extractConnAddr(c.conn.LocalAddr())
+	serverIP = c.natTranslateIP(serverIP)
+	clientIP = c.natTranslateIP(clientIP)
+
+	// --- derive AES-256-CBC keys BEFORE sending handshake ---
+	// In C: tcp_rpcc_process_nonce_packet calls rpc_start_crypto (sets up AES-CBC),
+	// then tcp_rpcc_send_handshake_packet is sent THROUGH the crypto layer.
+	aesKeys, err := crypto.AESCreateKeys(
+		true,
+		serverNonce, clientNonce,
+		nonceTSSec,
+		serverIP, serverPort, serverIPv6,
+		clientIP, clientPort, clientIPv6,
+		c.secret,
+		tempKey,
+	)
+	if err != nil {
+		return fmt.Errorf("AES key derivation: %w", err)
+	}
+
+	// Set up AES-256-CBC (NOT CTR!) for outbound RPC connections.
+	// C: aes_crypto_init → evp_cipher_ctx_init(EVP_aes_256_cbc(), ..., padding=0)
+	enc, err := crypto.NewAESCBCEncryptor(aesKeys.WriteKey, aesKeys.WriteIV)
+	if err != nil {
+		return err
+	}
+	dec, err := crypto.NewAESCBCDecryptor(aesKeys.ReadKey, aesKeys.ReadIV)
+	if err != nil {
+		return err
+	}
+
+	c.cbcEnc = enc
+	c.cbcDec = dec
+	c.cbcReader = &cbcDecryptReader{r: c.conn, dec: dec}
+
+	// --- send RPC_HANDSHAKE (ENCRYPTED — crypto is now active) ---
 	if err := c.sendHandshake(); err != nil {
 		return err
 	}
 
-	// --- read server RPC_HANDSHAKE ---
-	_, hsData, err := c.readRawFrame()
+	// --- read server RPC_HANDSHAKE (ENCRYPTED) ---
+	_, hsData, err := c.readEncryptedFrame()
 	if err != nil {
 		return fmt.Errorf("read handshake response: %w", err)
 	}
@@ -247,35 +292,42 @@ func (c *rpcOutboundConn) handshake() error {
 		return fmt.Errorf("expected RPC_HANDSHAKE (0x%08x), got 0x%08x", rpcHandshake, hsType)
 	}
 
-	// --- derive AES keys ---
-	// aes_create_keys(amClient=true, nonceServer=serverNonce, nonceClient=clientNonce, ...)
-	// We are the client connecting to the server.
-	aesKeys, err := crypto.AESCreateKeys(
-		true,
-		serverNonce, clientNonce,
-		nonceTSSec,
-		0, 0, [16]byte{}, // server IPv4/port (0 = use IPv6 path; we pass 0 for simplicity here)
-		0, 0, [16]byte{}, // client IPv4/port
-		c.secret,
-		tempKey,
-	)
-	if err != nil {
-		return fmt.Errorf("AES key derivation: %w", err)
-	}
-
-	enc, err := crypto.NewAESCTRState(aesKeys.WriteKey, aesKeys.WriteIV)
-	if err != nil {
-		return err
-	}
-	dec, err := crypto.NewAESCTRState(aesKeys.ReadKey, aesKeys.ReadIV)
-	if err != nil {
-		return err
-	}
-
-	c.encryptor = enc
-	c.decryptor = dec
-
+	log.Printf("rpc_handshake: connected to %s (crypto=CBC, schema=%d)", c.addr, cryptoSchema)
 	return nil
+}
+
+// extractConnAddr extracts IPv4 address (as uint32), port (as uint16), and IPv6 address
+// from a net.Addr. Returns (ipv4, port, ipv6). If the address is IPv4, ipv4 is set and
+// ipv6 is zero. If IPv6, ipv4 is 0 and ipv6 is set (triggering the IPv6 key derivation path).
+func extractConnAddr(addr net.Addr) (uint32, uint16, [16]byte) {
+	var ipv6 [16]byte
+	tcp, ok := addr.(*net.TCPAddr)
+	if !ok {
+		return 0, 0, ipv6
+	}
+	port := uint16(tcp.Port)
+	ip4 := tcp.IP.To4()
+	if ip4 != nil {
+		// IPv4: pack as little-endian uint32 (matching C's in_addr network byte order)
+		ipv4 := uint32(ip4[0]) | uint32(ip4[1])<<8 | uint32(ip4[2])<<16 | uint32(ip4[3])<<24
+		return ipv4, port, ipv6
+	}
+	// IPv6
+	ip16 := tcp.IP.To16()
+	if ip16 != nil {
+		copy(ipv6[:], ip16)
+	}
+	return 0, port, ipv6
+}
+
+// keySignature returns the first 4 bytes of the AES secret as a LE uint32.
+// In C this is main_secret.key_signature — a union of secret[] and int,
+// so it's simply *(int*)secret, i.e. the first 4 bytes.
+func (c *rpcOutboundConn) keySignature() uint32 {
+	if len(c.secret) < 4 {
+		return 0
+	}
+	return binary.LittleEndian.Uint32(c.secret[0:4])
 }
 
 // sendNonceAES sends a RPC_NONCE packet requesting AES encryption.
@@ -284,7 +336,9 @@ func (c *rpcOutboundConn) sendNonceAES(clientNonce [16]byte, ts uint32) error {
 	// Packet layout: [type(4)][key_select(4)][crypto_schema(4)][crypto_ts(4)][nonce(16)] = 32 bytes
 	pkt := make([]byte, 32)
 	binary.LittleEndian.PutUint32(pkt[0:4], rpcNonce)
-	binary.LittleEndian.PutUint32(pkt[4:8], 0) // key_select = 0 (no key verification on client init)
+	// key_select = first 4 bytes of secret as LE uint32 (C: main_secret.key_signature,
+	// which is a union with secret[] — i.e., *(int*)secret)
+	binary.LittleEndian.PutUint32(pkt[4:8], c.keySignature())
 	binary.LittleEndian.PutUint32(pkt[8:12], rpccCryptoAES)
 	binary.LittleEndian.PutUint32(pkt[12:16], ts)
 	copy(pkt[16:32], clientNonce[:])
@@ -299,7 +353,7 @@ func (c *rpcOutboundConn) sendNonceDH(clientNonce [16]byte, ts uint32, gA [256]b
 	// = 32 + 4 + 32 + 4 + 256 = 328 bytes
 	pkt := make([]byte, 328)
 	binary.LittleEndian.PutUint32(pkt[0:4], rpcNonce)
-	binary.LittleEndian.PutUint32(pkt[4:8], 0) // key_select
+	binary.LittleEndian.PutUint32(pkt[4:8], c.keySignature())
 	binary.LittleEndian.PutUint32(pkt[8:12], rpccCryptoAESDH)
 	binary.LittleEndian.PutUint32(pkt[12:16], ts)
 	copy(pkt[16:32], clientNonce[:])
@@ -312,13 +366,39 @@ func (c *rpcOutboundConn) sendNonceDH(clientNonce [16]byte, ts uint32, gA [256]b
 
 // sendHandshake sends a RPC_HANDSHAKE packet.
 // Corresponds to tcp_rpcc_send_handshake_packet() in C.
+// IMPORTANT: This is sent AFTER crypto is set up, so it must be encrypted.
+//
+// Payload layout (32 bytes, matching C struct tcp_rpc_handshake_packet):
+//   [type(4)][flags(4)][sender_pid(12)][peer_pid(12)]
+//
+// struct process_id (12 bytes, #pragma pack(4)):
+//   [ip(4)][port(2)][pid(2)][utime(4)]
 func (c *rpcOutboundConn) sendHandshake() error {
-	// [type(4)][flags(4)][sender_pid(16)][peer_pid(16)] = 40 bytes minimum
-	// We send zeros for PIDs since we don't track process IDs in Go port.
-	pkt := make([]byte, 40)
+	pkt := make([]byte, 32)
 	binary.LittleEndian.PutUint32(pkt[0:4], rpcHandshake)
 	// flags = 0 (no CRC32C extension)
-	return c.writeRawFrame(pkt)
+
+	// sender_pid: our process identity (offset 8)
+	clientIP, clientPort, _ := extractConnAddr(c.conn.LocalAddr())
+	binary.LittleEndian.PutUint32(pkt[8:12], clientIP)
+	binary.LittleEndian.PutUint16(pkt[12:14], clientPort)
+	pid := uint16(uint32(os.Getpid()) & 0xFFFF)
+	if pid == 0 {
+		pid = 1
+	}
+	binary.LittleEndian.PutUint16(pkt[14:16], pid)
+	binary.LittleEndian.PutUint32(pkt[16:20], uint32(time.Now().Unix()))
+
+	// peer_pid: remote DC identity (offset 20)
+	serverIP, serverPort, _ := extractConnAddr(c.conn.RemoteAddr())
+	if serverIP == 0x7f000001 { // loopback → 0 (matching C)
+		serverIP = 0
+	}
+	binary.LittleEndian.PutUint32(pkt[20:24], serverIP)
+	binary.LittleEndian.PutUint16(pkt[24:26], serverPort)
+	// peer_pid.pid and peer_pid.utime = 0 (unknown, matching C)
+
+	return c.writeEncryptedFrame(pkt)
 }
 
 // writeRawFrame writes an unencrypted RPC frame.
@@ -342,7 +422,10 @@ func (c *rpcOutboundConn) writeRawFrame(payload []byte) error {
 	return err
 }
 
-// writeEncryptedFrame writes an encrypted RPC frame after handshake.
+// writeEncryptedFrame writes an AES-256-CBC encrypted RPC frame.
+// After building the frame, it adds padding to align to 16-byte boundary
+// (matching C's tcp_rpc_flush which pads with skip-packets of value 4),
+// then encrypts the full aligned buffer with CBC.
 func (c *rpcOutboundConn) writeEncryptedFrame(payload []byte) error {
 	seqno := atomic.AddInt32(&c.outSeqno, 1) - 1
 	totalLen := uint32(4 + 4 + len(payload) + 4)
@@ -355,58 +438,56 @@ func (c *rpcOutboundConn) writeEncryptedFrame(payload []byte) error {
 	crc := crc32.ChecksumIEEE(frame[:8+len(payload)])
 	binary.LittleEndian.PutUint32(frame[8+len(payload):], crc)
 
-	// Encrypt entire frame with AES-CTR
-	c.encryptor.Encrypt(frame, frame)
+	// Pad to 16-byte alignment for CBC (matching C's tcp_rpc_flush).
+	// Padding consists of 4-byte words with value 4 (LE uint32).
+	// The parser recognizes packet_len==4 as a skip-packet.
+	padBytes := (16 - (len(frame) % 16)) % 16
+	for i := 0; i < padBytes; i += 4 {
+		frame = append(frame, 4, 0, 0, 0)
+	}
+
+	// Encrypt with AES-256-CBC
+	encrypted := make([]byte, len(frame))
+	c.cbcEnc.Encrypt(encrypted, frame)
 
 	c.writeMu.Lock()
 	defer c.writeMu.Unlock()
-	_, err := c.conn.Write(frame)
+	_, err := c.conn.Write(encrypted)
 	return err
 }
 
 // readRawFrame reads one RPC frame from the connection (unencrypted, used during handshake).
 // Returns (payloadLen, payloadBytes, error).
 func (c *rpcOutboundConn) readRawFrame() (int, []byte, error) {
-	return readFrame(c.conn, nil)
+	return readRawFrame(c.conn)
 }
 
-// readEncryptedFrame reads and decrypts one RPC frame.
+// readEncryptedFrame reads and decrypts one CBC-encrypted RPC frame.
+// Skips padding packets (packet_len == 4) automatically.
 func (c *rpcOutboundConn) readEncryptedFrame() (int, []byte, error) {
-	return readFrame(c.conn, c.decryptor)
+	return readCBCFrame(c.cbcReader)
 }
 
-// readFrame reads one complete RPC frame from r, optionally decrypting with dec.
+// readRawFrame reads one unencrypted RPC frame.
 // Frame layout: [4B total_len LE][4B seqno LE][payload][4B CRC32]
-func readFrame(r io.Reader, dec *crypto.AESState) (int, []byte, error) {
-	// Read the 4-byte length prefix
+func readRawFrame(r io.Reader) (int, []byte, error) {
 	var lenBuf [4]byte
 	if _, err := io.ReadFull(r, lenBuf[:]); err != nil {
 		return 0, nil, err
 	}
 
-	var lenBytes [4]byte
-	copy(lenBytes[:], lenBuf[:])
-	if dec != nil {
-		dec.Decrypt(lenBytes[:], lenBytes[:])
-	}
-
-	totalLen := binary.LittleEndian.Uint32(lenBytes[:])
+	totalLen := binary.LittleEndian.Uint32(lenBuf[:])
 	if totalLen < 16 || totalLen > 4*1024*1024 {
 		return 0, nil, fmt.Errorf("invalid frame length: %d", totalLen)
 	}
 
-	// Read the rest of the frame
 	rest := make([]byte, totalLen-4)
 	if _, err := io.ReadFull(r, rest); err != nil {
 		return 0, nil, err
 	}
-	if dec != nil {
-		dec.Decrypt(rest, rest)
-	}
 
-	// Verify CRC32 over [len(4)] + rest[0..totalLen-8]
 	fullFrame := make([]byte, totalLen)
-	copy(fullFrame[0:4], lenBytes[:])
+	copy(fullFrame[0:4], lenBuf[:])
 	copy(fullFrame[4:], rest)
 
 	payloadEnd := int(totalLen) - 4
@@ -416,9 +497,95 @@ func readFrame(r io.Reader, dec *crypto.AESState) (int, []byte, error) {
 		return 0, nil, fmt.Errorf("CRC32 mismatch: expected 0x%08x got 0x%08x", expectedCRC, gotCRC)
 	}
 
-	// payload starts at offset 8 (after len+seqno), ends before CRC
 	payload := fullFrame[8:payloadEnd]
 	return len(payload), payload, nil
+}
+
+// readCBCFrame reads one frame from a CBC-decrypted stream,
+// skipping padding packets (packet_len == 4) automatically.
+func readCBCFrame(r io.Reader) (int, []byte, error) {
+	for {
+		var lenBuf [4]byte
+		if _, err := io.ReadFull(r, lenBuf[:]); err != nil {
+			return 0, nil, err
+		}
+
+		totalLen := binary.LittleEndian.Uint32(lenBuf[:])
+
+		// Skip padding packets (matching C: if packet_len == 4, skip and continue)
+		if totalLen == 4 {
+			continue
+		}
+
+		if totalLen < 16 || totalLen > 4*1024*1024 {
+			return 0, nil, fmt.Errorf("invalid frame length: %d", totalLen)
+		}
+
+		rest := make([]byte, totalLen-4)
+		if _, err := io.ReadFull(r, rest); err != nil {
+			return 0, nil, err
+		}
+
+		fullFrame := make([]byte, totalLen)
+		copy(fullFrame[0:4], lenBuf[:])
+		copy(fullFrame[4:], rest)
+
+		payloadEnd := int(totalLen) - 4
+		expectedCRC := crc32.ChecksumIEEE(fullFrame[:payloadEnd])
+		gotCRC := binary.LittleEndian.Uint32(fullFrame[payloadEnd:])
+		if expectedCRC != gotCRC {
+			return 0, nil, fmt.Errorf("CRC32 mismatch: expected 0x%08x got 0x%08x", expectedCRC, gotCRC)
+		}
+
+		payload := fullFrame[8:payloadEnd]
+		return len(payload), payload, nil
+	}
+}
+
+// cbcDecryptReader provides a transparent decrypted byte stream over an
+// AES-256-CBC encrypted TCP connection. It reads encrypted data from the
+// underlying reader, decrypts full 16-byte blocks, and serves decrypted
+// bytes to callers. Works with io.ReadFull for frame parsing.
+type cbcDecryptReader struct {
+	r      io.Reader
+	dec    *crypto.AESCBCDecryptor
+	rawBuf []byte // encrypted bytes not yet forming a full 16-byte block
+	decBuf []byte // decrypted bytes ready to consume
+}
+
+func (cr *cbcDecryptReader) Read(p []byte) (int, error) {
+	// Serve from decrypted buffer first
+	if len(cr.decBuf) > 0 {
+		n := copy(p, cr.decBuf)
+		cr.decBuf = cr.decBuf[n:]
+		return n, nil
+	}
+
+	// Keep reading until we have at least one full block to decrypt
+	for {
+		buf := make([]byte, 4096)
+		n, err := cr.r.Read(buf)
+		if n > 0 {
+			cr.rawBuf = append(cr.rawBuf, buf[:n]...)
+		}
+
+		blocks := (len(cr.rawBuf) / 16) * 16
+		if blocks > 0 {
+			decrypted := make([]byte, blocks)
+			cr.dec.Decrypt(decrypted, cr.rawBuf[:blocks])
+			cr.rawBuf = cr.rawBuf[blocks:]
+
+			nn := copy(p, decrypted)
+			if nn < len(decrypted) {
+				cr.decBuf = decrypted[nn:]
+			}
+			return nn, nil
+		}
+
+		if err != nil {
+			return 0, err
+		}
+	}
 }
 
 // SendProxyRequest builds and sends a RPC_PROXY_REQ frame to the Telegram DC.
@@ -597,14 +764,15 @@ func (c *rpcOutboundConn) handleSimpleAck(payload []byte) {
 		return
 	}
 	connID := int64(binary.LittleEndian.Uint64(payload[4:12]))
-	// confirm := binary.LittleEndian.Uint32(payload[12:16]) — acknowledgement key
 
 	c.pendingMu.Lock()
 	ch, ok := c.pending[connID]
+	if ok {
+		delete(c.pending, connID)
+	}
 	c.pendingMu.Unlock()
 
 	if ok {
-		// Send an empty-data ack response
 		resp := ProxyResponse{Flags: 0, ConnID: connID}
 		select {
 		case ch <- resp:
@@ -666,6 +834,17 @@ func (c *rpcOutboundConn) sendPing() error {
 	binary.LittleEndian.PutUint32(pkt[0:4], uint32(protocol.RPCPing))
 	copy(pkt[4:12], pingID[:])
 	return c.writeEncryptedFrame(pkt)
+}
+
+// natTranslateIP applies NAT translation to an IPv4 address.
+// Matches C: nat_translate_ip() in net/net-connections.c.
+func (c *rpcOutboundConn) natTranslateIP(ip uint32) uint32 {
+	if c.natInfo != nil {
+		if pub, ok := c.natInfo[ip]; ok {
+			return pub
+		}
+	}
+	return ip
 }
 
 // --- DH helpers (ported from net/net-crypto-dh.c) ---
