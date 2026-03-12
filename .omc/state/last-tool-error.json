@@ -1,0 +1,7 @@
+{
+  "tool_name": "Bash",
+  "tool_input_preview": "{\"command\":\"go test ./... 2>&1\",\"timeout\":120000,\"description\":\"Run all tests after fix\"}",
+  "error": "Exit code 1\n?   \tgithub.com/nicholasgasior/mtproxy/cmd/mtproto-proxy\t[no test files]\nok  \tgithub.com/nicholasgasior/mtproxy/internal/cli\t(cached)\nok  \tgithub.com/nicholasgasior/mtproxy/internal/config\t(cached)\nok  \tgithub.com/nicholasgasior/mtproxy/internal/crypto\t(cached)\n?   \tgithub.com/nicholasgasior/mtproxy/internal/engine\t[no test files]\nok  \tgithub.com/nicholasgasior/mtproxy/internal/protocol\t(cached)\n--- FAIL: TestReadWritePacket_Abridged (0.00s)\n    client_transport_test.go:260: round-tr...",
+  "timestamp": "2026-03-11T21:24:15.569Z",
+  "retry_count": 1
+}
