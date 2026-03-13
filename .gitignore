@@ -2,9 +2,9 @@ objs
 dep
 .DS_Store
 .opencode
-mtproto-proxy
-proxy-multi.conf
-proxy-secret
+./mtproto-proxy
+./proxy-multi.conf
+./roxy-secret
 
-mtproto-proxy
-mtproto-proxy-go
+./mtproto-proxy-go
+artifacts

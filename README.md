@@ -1,124 +1,107 @@
-# MTProxy
-Simple MT-Proto proxy
+# MTProxy (Go)
+
+A complete Go port of the [original MTProxy](https://github.com/TelegramMessenger/MTProxy) — a simple MT-Proto proxy for Telegram.
 
 ## Building
-Install dependencies, you would need common set of tools for building from source, and development packages for `openssl` and `zlib`.
 
-On Debian/Ubuntu:
-```bash
-apt install git curl build-essential libssl-dev zlib1g-dev
-```
-On CentOS/RHEL:
-```bash
-yum install openssl-devel zlib-devel
-yum groupinstall "Development Tools"
-```
-On macOS (Homebrew):
-```bash
-brew install openssl@3 zlib epoll-shim make gcc
-```
-
-Clone the repo:
-```bash
-git clone https://github.com/TelegramMessenger/MTProxy
-cd MTProxy
-```
-
-To build, simply run `make`, the binary will be in `objs/bin/mtproto-proxy`:
+Requires Go 1.26+.
 
 ```bash
-make && cd objs/bin
+go build -o mtproto-proxy ./cmd/mtproto-proxy
 ```
-On macOS with Homebrew GCC:
-```bash
-CC=gcc-15 gmake && cd objs/bin
-```
-
-If the build has failed, you should run `make clean` before building it again.
 
 ## Running
-1. Obtain a secret, used to connect to telegram servers.
+
+1. Obtain a secret used to connect to Telegram servers:
 ```bash
 curl -s https://core.telegram.org/getProxySecret -o proxy-secret
 ```
-2. Obtain current telegram configuration. It can change (occasionally), so we encourage you to update it once per day.
+
+2. Obtain the current Telegram configuration (update daily):
 ```bash
 curl -s https://core.telegram.org/getProxyConfig -o proxy-multi.conf
 ```
-3. Generate a secret to be used by users to connect to your proxy.
+
+3. Generate a secret for client connections:
 ```bash
 head -c 16 /dev/urandom | xxd -ps
 ```
-4. Run `mtproto-proxy`:
+
+4. Run the proxy:
 ```bash
-./mtproto-proxy -u nobody -p 8888 -H 443 -S <secret> --aes-pwd proxy-secret proxy-multi.conf -M 1
+./mtproto-proxy -H 443 -S <secret> --aes-pwd proxy-secret proxy-multi.conf
 ```
-or use a file with secret(s):
+
+Or with a secrets file:
 ```bash
-./mtproto-proxy -u nobody -p 8888 -H 443 --mtproto-secret-file /path/to/mtproto-secrets.txt --aes-pwd proxy-secret proxy-multi.conf -M 1
+./mtproto-proxy -H 443 --mtproto-secret-file secrets.txt --aes-pwd proxy-secret proxy-multi.conf
 ```
-... where:
-- `nobody` is the username. `mtproto-proxy` calls `setuid()` to drop privileges.
-- `443` is the port, used by clients to connect to the proxy.
-- `8888` is the local port. You can use it to get statistics from `mtproto-proxy`. Like `wget localhost:8888/stats`. You can only get this stat via loopback.
-- `<secret>` is the secret generated at step 3. Also you can set multiple secrets: `-S <secret1> -S <secret2>`.
-  For a large list of secrets, use `--mtproto-secret-file /path/to/secrets.txt` (secrets can be comma- or whitespace-separated, `#` starts a comment line fragment).
-- `--mtproto-secret-file` is an alternative to `-S` and allows loading secret(s) from a file (secrets must be in the same 32-hex format as `-S`).
-- `proxy-secret` and `proxy-multi.conf` are obtained at steps 1 and 2.
-- `1` is the number of workers. You can increase the number of workers, if you have a powerful server.
 
-Also feel free to check out other options using `mtproto-proxy --help`.
+## Options
 
-5. Generate the link with following schema: `tg://proxy?server=SERVER_NAME&port=PORT&secret=SECRET` (or let the official bot generate it for you).
-6. Register your proxy with [@MTProxybot](https://t.me/MTProxybot) on Telegram.
-7. Set received tag with arguments: `-P <proxy tag>`
-8. Enjoy.
+| Flag | Description |
+|------|-------------|
+| `-S`, `--mtproto-secret <hex>` | 16-byte secret in hex (32 chars); repeatable |
+| `--mtproto-secret-file <path>` | File with secrets (comma or whitespace separated) |
+| `-P`, `--proxy-tag <hex>` | 16-byte proxy tag in hex (32 chars) |
+| `-M`, `--slaves <N>` | Number of worker processes (default 1) |
+| `-H`, `--http-ports <ports>` | Comma-separated client listen ports |
+| `--aes-pwd <path>` | AES secret file for RPC connections |
+| `--http-stats` | Enable HTTP stats endpoint |
+| `-C`, `--max-special-connections <N>` | Max client connections per worker (0 = unlimited) |
+| `-W`, `--window-clamp <N>` | TCP window clamp for client connections |
+| `--nat-info <local_ip:public_ip>` | NAT IP translation for key derivation; repeatable |
+| `-D`, `--domain <domain>` | TLS domain; disables other transports; repeatable |
+| `-T`, `--ping-interval <sec>` | Ping interval in seconds (default 5.0) |
+| `-u`, `--user <username>` | Username for setuid |
+| `-6` | Prefer IPv6 for outbound connections |
+| `-v`, `--verbosity <N>` | Verbosity level |
+| `-d`, `--daemonize` | Daemonize the process |
 
-## Random padding
-Due to some ISPs detecting MTProxy by packet sizes, random padding is
-added to packets if such mode is enabled.
+## NAT Support
 
-It's only enabled for clients which request it.
+When running behind NAT, use `--nat-info` to map local IPs to public IPs for correct key derivation:
 
-Add `dd` prefix to secret (`cafe...babe` => `ddcafe...babe`) to enable
-this mode on client side.
-
-## Systemd example configuration
-1. Create systemd service file (it's standard path for the most Linux distros, but you should check it before):
 ```bash
-nano /etc/systemd/system/MTProxy.service
+./mtproto-proxy -H 443 -S <secret> --aes-pwd proxy-secret \
+  --nat-info 10.0.1.10:203.0.113.5 proxy-multi.conf
 ```
-2. Edit this basic service (especially paths and params):
-```bash
+
+## Random Padding
+
+Random padding is supported to counter DPI detection by some ISPs.
+Add the `dd` prefix to the secret on the client side: `cafe...babe` → `ddcafe...babe`.
+
+## Systemd
+
+```ini
 [Unit]
 Description=MTProxy
 After=network.target
 
 [Service]
 Type=simple
-WorkingDirectory=/opt/MTProxy
-ExecStart=/opt/MTProxy/mtproto-proxy -u nobody -p 8888 -H 443 -S <secret> -P <proxy tag> <other params>
+WorkingDirectory=/opt/mtproxy
+ExecStart=/opt/mtproxy/mtproto-proxy -H 443 -S <secret> --aes-pwd proxy-secret proxy-multi.conf
 Restart=on-failure
 
 [Install]
 WantedBy=multi-user.target
 ```
-3. Reload daemons:
-```bash
-systemctl daemon-reload
+
+## Project Structure
+
 ```
-4. Test fresh MTProxy service:
-```bash
-systemctl restart MTProxy.service
-# Check status, it should be active
-systemctl status MTProxy.service
-```
-5. Enable it, to autostart service after reboot:
-```bash
-systemctl enable MTProxy.service
+cmd/mtproto-proxy/    — entrypoint, supervisor
+internal/
+  cli/                — CLI argument parsing
+  config/             — DC configuration loading and updates
+  crypto/             — AES, DH, CRC, SHA
+  protocol/           — MTProto constants and frames
+  proxy/              — proxy core: ingress, outbound, RPC, stats
+c-original/           — original C implementation (reference)
 ```
 
-## Docker image
-Telegram is also providing [official Docker image](https://hub.docker.com/r/telegrammessenger/proxy/).
-Note: the image is outdated.
-The bundled `docker/run.sh` loads secrets from `/data/secret` when that file exists and is non-empty; otherwise it uses `SECRET` env (comma-separated list), and passes them via `--mtproto-secret-file`.
+## License
+
+GPLv2 — see [GPLv2](GPLv2), [LGPLv2](LGPLv2).
