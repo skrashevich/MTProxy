@@ -25,36 +25,26 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Install dependencies (Linux)
-        if: runner.os == 'Linux'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y build-essential pkg-config libssl-dev zlib1g-dev
-
-      - name: Install dependencies (macOS)
-        if: runner.os == 'macOS'
-        run: |
-          brew install openssl@3 zlib epoll-shim pkg-config make
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
 
       - name: Verify macOS runner architecture
         if: runner.os == 'macOS'
         run: test "$(uname -m)" = "arm64"
 
-      - name: Build
-        run: |
-          if [[ "$RUNNER_OS" == "Linux" ]]; then
-            JOBS="$(nproc)"
-          else
-            JOBS="$(sysctl -n hw.ncpu)"
-          fi
-          make clean
-          make -j"$JOBS"
+      - name: Run tests
+        run: go test ./...
+
+      - name: Build Go binary
+        run: go build -trimpath -o mtproto-proxy ./cmd/mtproto-proxy
 
       - name: Smoke test binary
         shell: bash
         run: |
           set -euo pipefail
-          BIN="./objs/bin/mtproto-proxy"
+          BIN="./mtproto-proxy"
           test -x "$BIN"
 
           set +e
@@ -62,10 +52,10 @@ jobs:
           code=$?
           set -e
 
-          if [[ "$code" -ne 0 && "$code" -ne 2 ]]; then
+          if [[ "$code" -ne 0 ]]; then
             cat help.txt
             echo "Unexpected exit code: $code"
             exit "$code"
           fi
 
-          grep -Eq "usage:|Simple MT-Proto proxy|mtproxy" help.txt
+          grep -Eq "Usage:|Simple MT-Proto proxy|mtproxy" help.txt
