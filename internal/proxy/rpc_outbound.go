@@ -14,7 +14,6 @@ import (
 	"net"
 	"os"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	"github.com/skrashevich/MTProxy/internal/crypto"
@@ -111,7 +110,7 @@ func newRPCOutboundConn(addr string, secret []byte, forceDH bool, natInfo map[ui
 		closed:  make(chan struct{}),
 	}
 	// C protocol: out_packet_num starts at -2 (tcp_rpcc_connected, line 455)
-	atomic.StoreInt32(&c.outSeqno, -2)
+	c.outSeqno = -2
 	return c
 }
 
@@ -405,9 +404,10 @@ func (c *rpcOutboundConn) sendHandshake() error {
 
 // writeRawFrame writes an unencrypted RPC frame.
 // RPC frame layout: [4B total_len LE][4B seqno LE][payload][4B CRC32 of (len+seqno+payload)]
-// Used only during handshake (before encryption is established).
+// Used only during handshake (before encryption is established, single goroutine).
 func (c *rpcOutboundConn) writeRawFrame(payload []byte) error {
-	seqno := atomic.AddInt32(&c.outSeqno, 1) - 1
+	seqno := c.outSeqno
+	c.outSeqno++
 	totalLen := uint32(4 + 4 + len(payload) + 4) // len + seqno + payload + crc
 
 	frame := make([]byte, int(totalLen))
@@ -418,8 +418,6 @@ func (c *rpcOutboundConn) writeRawFrame(payload []byte) error {
 	crc := crc32.ChecksumIEEE(frame[:8+len(payload)])
 	binary.LittleEndian.PutUint32(frame[8+len(payload):], crc)
 
-	c.writeMu.Lock()
-	defer c.writeMu.Unlock()
 	_, err := c.conn.Write(frame)
 	return err
 }
@@ -428,8 +426,19 @@ func (c *rpcOutboundConn) writeRawFrame(payload []byte) error {
 // After building the frame, it adds padding to align to 16-byte boundary
 // (matching C's tcp_rpc_flush which pads with skip-packets of value 4),
 // then encrypts the full aligned buffer with CBC.
+//
+// The entire operation (seqno assignment, frame building, CBC encryption,
+// and TCP write) is serialized under writeMu because:
+//  1. CBC encryption is stateful (IV chains) — concurrent Encrypt calls corrupt state.
+//  2. Frames must be written in seqno order to maintain the CBC stream.
+//
+// In C this is not an issue because the event loop is single-threaded.
 func (c *rpcOutboundConn) writeEncryptedFrame(payload []byte) error {
-	seqno := atomic.AddInt32(&c.outSeqno, 1) - 1
+	c.writeMu.Lock()
+	defer c.writeMu.Unlock()
+
+	seqno := c.outSeqno
+	c.outSeqno++
 	totalLen := uint32(4 + 4 + len(payload) + 4)
 
 	frame := make([]byte, int(totalLen))
@@ -452,8 +461,6 @@ func (c *rpcOutboundConn) writeEncryptedFrame(payload []byte) error {
 	encrypted := make([]byte, len(frame))
 	c.cbcEnc.Encrypt(encrypted, frame)
 
-	c.writeMu.Lock()
-	defer c.writeMu.Unlock()
 	_, err := c.conn.Write(encrypted)
 	return err
 }
