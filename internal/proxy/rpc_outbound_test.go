@@ -131,7 +131,9 @@ func TestHandleFrameDispatch(t *testing.T) {
 	}
 }
 
-// TestHandleSimpleAck verifies RPC_SIMPLE_ACK dispatch.
+// TestHandleSimpleAck verifies RPC_SIMPLE_ACK does NOT consume the pending channel.
+// In C, RPC_SIMPLE_ACK sends a quickack but keeps the ext_conn_id binding alive
+// for a subsequent RPC_PROXY_ANS. The Go code must not delete the pending entry.
 func TestHandleSimpleAck(t *testing.T) {
 	c := newRPCOutboundConn("test", nil, false, nil)
 
@@ -147,13 +149,20 @@ func TestHandleSimpleAck(t *testing.T) {
 
 	c.handleFrame(int32(protocol.RPCSimpleAck), payload)
 
+	// Pending channel must NOT be consumed — verify it's still registered
+	c.pendingMu.Lock()
+	_, stillPending := c.pending[connID]
+	c.pendingMu.Unlock()
+	if !stillPending {
+		t.Fatal("RPC_SIMPLE_ACK should not consume the pending channel")
+	}
+
+	// Channel should be empty (no dispatch)
 	select {
-	case resp := <-respCh:
-		if resp.ConnID != connID {
-			t.Errorf("expected connID 0x%x, got 0x%x", connID, resp.ConnID)
-		}
-	case <-time.After(100 * time.Millisecond):
-		t.Fatal("timeout: RPC_SIMPLE_ACK not dispatched")
+	case <-respCh:
+		t.Fatal("RPC_SIMPLE_ACK should not dispatch to the channel")
+	default:
+		// expected
 	}
 }
 

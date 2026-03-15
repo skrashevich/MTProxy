@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"sync"
 	"time"
+
+	"github.com/skrashevich/MTProxy/internal/protocol"
 )
 
 // OutboundConfig holds configuration for the outbound proxy pool.
@@ -64,6 +66,10 @@ func (p *OutboundProxy) ForwardPacket(target string, req []byte) ([]byte, error)
 
 	select {
 	case resp := <-respCh:
+		// RPC_CLOSE_EXT from DC means "close this client connection"
+		if resp.Flags == int32(protocol.RPCCloseExt) {
+			return nil, fmt.Errorf("outbound: DC requested close for conn %d", extConnID)
+		}
 		return resp.Data, nil
 	case <-conn.closed:
 		return nil, fmt.Errorf("outbound: connection to %s closed", target)

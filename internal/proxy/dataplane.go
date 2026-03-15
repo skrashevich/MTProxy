@@ -15,6 +15,8 @@ type DataPlane struct {
 	outbound *OutboundProxy
 	stats    *Stats
 	proxyTag []byte // 16 байт или nil
+	ourIP    net.IP // proxy's own listening IP (for RPC_PROXY_REQ our_ip field)
+	ourPort  int    // proxy's own listening port
 }
 
 // NewDataPlane создаёт DataPlane.
@@ -24,6 +26,15 @@ func NewDataPlane(router *Router, outbound *OutboundProxy, stats *Stats, proxyTa
 		outbound: outbound,
 		stats:    stats,
 		proxyTag: proxyTag,
+	}
+}
+
+// SetListenAddr sets the proxy's own address for RPC_PROXY_REQ our_ip/our_port fields.
+// Must be called before handling packets. Matches C's our_ip/our_port in forward_tcp_query.
+func (dp *DataPlane) SetListenAddr(addr net.Addr) {
+	if tcp, ok := addr.(*net.TCPAddr); ok {
+		dp.ourIP = tcp.IP
+		dp.ourPort = tcp.Port
 	}
 }
 
@@ -65,14 +76,15 @@ func (dp *DataPlane) HandlePacket(pkt IncomingPacket) ([]byte, error) {
 	}
 
 	remoteIPv6 := ipToIPv6Wire(pkt.ClientIP)
+	ourIPv6 := ipToIPv6Wire(dp.ourIP)
 
 	req := protocol.BuildProxyReq(
 		flags,
 		pkt.ExtConnID,
 		remoteIPv6,
 		uint32(pkt.ClientPort),
-		[16]byte{},
-		0,
+		ourIPv6,
+		uint32(dp.ourPort),
 		dp.proxyTag,
 		data,
 	)

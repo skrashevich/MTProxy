@@ -768,30 +768,26 @@ func (c *rpcOutboundConn) handleProxyAns(payload []byte) {
 
 // handleSimpleAck processes RPC_SIMPLE_ACK.
 // Layout: [type(4)][ext_conn_id(8)][confirm(4)]
+//
+// In C, RPC_SIMPLE_ACK sends a quickack (confirm_key) back to the client
+// but does NOT consume the ext_conn_id binding — a subsequent RPC_PROXY_ANS
+// may arrive with actual data. We must NOT delete the pending channel here;
+// only log the ack. The confirm_key delivery to the client is not yet
+// implemented (requires transport-aware quickack framing).
 func (c *rpcOutboundConn) handleSimpleAck(payload []byte) {
 	if len(payload) < 16 {
 		return
 	}
-	connID := int64(binary.LittleEndian.Uint64(payload[4:12]))
-
-	c.pendingMu.Lock()
-	ch, ok := c.pending[connID]
-	if ok {
-		delete(c.pending, connID)
-	}
-	c.pendingMu.Unlock()
-
-	if ok {
-		resp := ProxyResponse{Flags: 0, ConnID: connID}
-		select {
-		case ch <- resp:
-		default:
-		}
-	}
+	// connID and confirm_key are parsed but confirm_key is not yet forwarded.
+	// TODO: forward confirm_key as quickack to client (0xDD prefix in abridged mode).
 }
 
 // handleCloseExt processes RPC_CLOSE_EXT from server — server wants to close a client conn.
 // Layout: [type(4)][ext_conn_id(8)]
+//
+// In C, this removes the ext_connection, effectively closing the client TCP socket.
+// In Go, we signal closure by sending a response with the CloseExt flag set.
+// ForwardPacket checks this flag and returns an error, causing handleConn to close.
 func (c *rpcOutboundConn) handleCloseExt(payload []byte) {
 	if len(payload) < 12 {
 		return
@@ -806,8 +802,7 @@ func (c *rpcOutboundConn) handleCloseExt(payload []byte) {
 	c.pendingMu.Unlock()
 
 	if ok {
-		// Signal close to the waiting forwarder
-		resp := ProxyResponse{Flags: protocol.RPCCloseExt, ConnID: connID}
+		resp := ProxyResponse{Flags: int32(protocol.RPCCloseExt), ConnID: connID}
 		select {
 		case ch <- resp:
 		default:

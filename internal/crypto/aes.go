@@ -160,8 +160,14 @@ func AESCreateKeys(
 	buf = append(buf, nonceClient[:]...)
 	strLen += 16
 
-	// XOR with tempKey if provided (matching C behavior)
+	// XOR with tempKey if provided (matching C behavior).
+	// In C, str is a large stack buffer (~600 bytes) so writes beyond str_len are valid.
+	// In Go, we must extend the slice to accommodate tempKey bytes beyond strLen.
 	if len(tempKey) > 0 {
+		// Ensure buf is large enough to hold tempKey if it extends beyond strLen
+		if len(tempKey) > len(buf) {
+			buf = append(buf, make([]byte, len(tempKey)-len(buf))...)
+		}
 		firstLen := strLen
 		if len(tempKey) < firstLen {
 			firstLen = len(tempKey)
@@ -170,12 +176,10 @@ func AESCreateKeys(
 			buf[i] ^= tempKey[i]
 		}
 		if len(tempKey) > strLen {
-			for i := strLen; i < len(tempKey) && i < len(buf); i++ {
+			for i := strLen; i < len(tempKey); i++ {
 				buf[i] = tempKey[i]
 			}
-			if len(tempKey) > strLen {
-				strLen = len(tempKey)
-			}
+			strLen = len(tempKey)
 		}
 	}
 
