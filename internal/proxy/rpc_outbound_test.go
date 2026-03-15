@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/nicholasgasior/mtproxy/internal/protocol"
+	"github.com/skrashevicj/mtproxy/internal/protocol"
 )
 
 // TestDHHelpers verifies isGoodDHBin and basic DH round-trip logic.

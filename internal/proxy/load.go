@@ -6,7 +6,7 @@ import (
 	"os/signal"
 	"syscall"
 
-	"github.com/nicholasgasior/mtproxy/internal/config"
+	"github.com/skrashevicj/mtproxy/internal/config"
 )
 
 // HotReloader слушает SIGHUP и перезагружает конфигурацию.

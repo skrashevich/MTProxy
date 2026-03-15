@@ -215,15 +215,15 @@
       "type": "file"
     },
     {
-      "path": "net/net-tcp-rpc-client.c",
-      "accessCount": 11,
-      "lastAccessed": 1773297998062,
+      "path": "internal/cli/options.go",
+      "accessCount": 12,
+      "lastAccessed": 1773445704105,
       "type": "file"
     },
     {
-      "path": "internal/cli/options.go",
+      "path": "net/net-tcp-rpc-client.c",
       "accessCount": 11,
-      "lastAccessed": 1773301431612,
+      "lastAccessed": 1773297998062,
       "type": "file"
     },
     {
@@ -245,6 +245,12 @@
       "type": "directory"
     },
     {
+      "path": "go.mod",
+      "accessCount": 6,
+      "lastAccessed": 1773445700059,
+      "type": "file"
+    },
+    {
       "path": "engine/engine.c",
       "accessCount": 5,
       "lastAccessed": 1773263163842,
@@ -257,9 +263,9 @@
       "type": "file"
     },
     {
-      "path": "go.mod",
+      "path": "README.md",
       "accessCount": 5,
-      "lastAccessed": 1773301026506,
+      "lastAccessed": 1773445865639,
       "type": "file"
     },
     {
@@ -341,9 +347,9 @@
       "type": "file"
     },
     {
-      "path": "README.md",
-      "accessCount": 1,
-      "lastAccessed": 1773262081176,
+      "path": "Makefile",
+      "accessCount": 2,
+      "lastAccessed": 1773319711487,
       "type": "file"
     },
     {
@@ -356,12 +362,6 @@
       "path": "artifacts/dualrun/phase7-dualrun-report.json",
       "accessCount": 1,
       "lastAccessed": 1773262093938,
-      "type": "file"
-    },
-    {
-      "path": "Makefile",
-      "accessCount": 1,
-      "lastAccessed": 1773262130485,
       "type": "file"
     },
     {
