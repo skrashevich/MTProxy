@@ -81,8 +81,8 @@ func main() {
 			if localIP == nil || pubIP == nil {
 				log.Fatalf("fatal: --nat-info: invalid IP pair %s:%s", localStr, pubStr)
 			}
-			localU := uint32(localIP[0]) | uint32(localIP[1])<<8 | uint32(localIP[2])<<16 | uint32(localIP[3])<<24
-			pubU := uint32(pubIP[0]) | uint32(pubIP[1])<<8 | uint32(pubIP[2])<<16 | uint32(pubIP[3])<<24
+			localU := uint32(localIP[0])<<24 | uint32(localIP[1])<<16 | uint32(localIP[2])<<8 | uint32(localIP[3])
+			pubU := uint32(pubIP[0])<<24 | uint32(pubIP[1])<<16 | uint32(pubIP[2])<<8 | uint32(pubIP[3])
 			natMap[localU] = pubU
 			log.Printf("nat-info: %s (0x%08x) → %s (0x%08x)", localStr, localU, pubStr, pubU)
 		}

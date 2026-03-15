@@ -308,8 +308,10 @@ func extractConnAddr(addr net.Addr) (uint32, uint16, [16]byte) {
 	port := uint16(tcp.Port)
 	ip4 := tcp.IP.To4()
 	if ip4 != nil {
-		// IPv4: pack as little-endian uint32 (matching C's in_addr network byte order)
-		ipv4 := uint32(ip4[0]) | uint32(ip4[1])<<8 | uint32(ip4[2])<<16 | uint32(ip4[3])<<24
+		// IPv4: pack as host-order uint32 matching C's ntohl(sin_addr.s_addr).
+		// C stores IPs via ntohl → big-endian interpretation of dotted-quad.
+		// E.g. 149.154.161.144 → 0x959AA190.
+		ipv4 := uint32(ip4[0])<<24 | uint32(ip4[1])<<16 | uint32(ip4[2])<<8 | uint32(ip4[3])
 		return ipv4, port, ipv6
 	}
 	// IPv6
