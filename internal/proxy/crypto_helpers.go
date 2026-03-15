@@ -4,7 +4,7 @@ import (
 	"crypto/cipher"
 	"fmt"
 
-	"github.com/nicholasgasior/mtproxy/internal/crypto"
+	"github.com/skrashevich/MTProxy/internal/crypto"
 )
 
 // AESStreamState wraps an AES-256-CTR cipher.Stream for a single direction.

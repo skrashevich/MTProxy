@@ -3,7 +3,7 @@ package proxy
 import (
 	"testing"
 
-	"github.com/skrashevicj/mtproxy/internal/config"
+	"github.com/skrashevich/MTProxy/internal/config"
 )
 
 func makeTestConfig() *config.Config {

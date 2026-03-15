@@ -8,7 +8,7 @@ import (
 	"os/signal"
 	"syscall"
 
-	"github.com/skrashevicj/mtproxy/internal/config"
+	"github.com/skrashevich/MTProxy/internal/config"
 )
 
 // RuntimeOptions содержит параметры запуска из CLI/конфига.

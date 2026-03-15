@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"net"
 
-	"github.com/skrashevicj/mtproxy/internal/protocol"
+	"github.com/skrashevich/MTProxy/internal/protocol"
 )
 
 // DataPlane обрабатывает MTProto-пакеты от клиентов.

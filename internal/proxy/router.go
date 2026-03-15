@@ -5,7 +5,7 @@ import (
 	"math/rand"
 	"sync"
 
-	"github.com/skrashevicj/mtproxy/internal/config"
+	"github.com/skrashevich/MTProxy/internal/config"
 )
 
 // Router выбирает целевой backend для клиентского соединения.

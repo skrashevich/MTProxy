@@ -5,8 +5,8 @@ import (
 	"net"
 	"testing"
 
-	"github.com/skrashevicj/mtproxy/internal/config"
-	"github.com/skrashevicj/mtproxy/internal/protocol"
+	"github.com/skrashevich/MTProxy/internal/config"
+	"github.com/skrashevich/MTProxy/internal/protocol"
 )
 
 func makeDHPacketDP() []byte {

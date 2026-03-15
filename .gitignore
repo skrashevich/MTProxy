@@ -3,8 +3,8 @@ dep
 .DS_Store
 .opencode
 ./mtproto-proxy
-./proxy-multi.conf
-./roxy-secret
+proxy-multi.conf
+proxy-secret
 
 ./mtproto-proxy-go
 artifacts

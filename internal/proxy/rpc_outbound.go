@@ -17,8 +17,8 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/skrashevicj/mtproxy/internal/crypto"
-	"github.com/skrashevicj/mtproxy/internal/protocol"
+	"github.com/skrashevich/MTProxy/internal/crypto"
+	"github.com/skrashevich/MTProxy/internal/protocol"
 )
 
 // RPC nonce/handshake packet types (from net/net-tcp-rpc-common.h)

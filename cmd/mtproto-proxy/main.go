@@ -7,8 +7,8 @@ import (
 	"net"
 	"os"
 
-	"github.com/skrashevicj/mtproxy/internal/cli"
-	"github.com/skrashevicj/mtproxy/internal/proxy"
+	"github.com/skrashevich/MTProxy/internal/cli"
+	"github.com/skrashevich/MTProxy/internal/proxy"
 )
 
 func main() {
